@@ -684,3 +684,24 @@ assignment; it replaces the raw dictionary in an expander.
 **Why:** Jose noticed the plate view present in the annotations workflow was missing from the
 cell workflow — an oversight in Phase 3/4, not a decision. The plate is how a user checks the
 layout against what they will physically handle, so a dictionary dump is not a substitute.
+
+## 044 — Neighbours are shapes within a distance, not shapes that intersect
+**Date:** 2026-08-26 · **Status:** active · **supersedes the intersects test in 013/042**
+**Decision:** Adjacency uses `shapely.STRtree.query(..., predicate="dwithin", distance=d)`
+with a user-adjustable `d`, defaulting to 1 pixel, rather than a strict `intersects` test.
+Zero reverts to strict intersection.
+**Why:** Jose reported that no shapes were being counted as touching while the preview
+clearly showed many adjacent ones. Not a counting bug — the wrong predicate for the physical
+question. **QuPath's cell segmentation leaves a sub-pixel gap between adjacent cells**:
+measured on the real 8537-cell export, the median boundary-to-boundary gap to the nearest
+neighbour is 0.57 px (p95 0.87 px) and only 4% of cells actually intersect. So `intersects`
+found 350 pairs where a 1 px tolerance finds 26 336, involving 8213 of the 8537 shapes. Cells
+that are adjacent in every sense that matters for cutting were invisible to the check, which
+made both the constraint and its report meaningless.
+**Why exposed rather than fixed:** the right tolerance depends on the segmentation and on how
+much boundary sharing the user will accept, and it is cheap to explain — "shapes closer than
+this count as neighbours". The µm equivalent is shown when the image scale is known. This
+follows 019: expose the number, explain it, let the user decide.
+**Verified:** at 1 px, 900 of 3193 Tumor cells selects with 0 conflicts while 2700 of 3193
+reports 2206 — unavoidable at 85% of a dense class, and now visible instead of hidden.
+Cost 0.09 s over 8537 shapes.

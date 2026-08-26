@@ -275,6 +275,13 @@ categoricals × replicate count, cycling 6 hard-coded colours as Java signed int
   (`decisions.md` 015).
 - **Filling is round-robin across replicates** as the stream is consumed, which serves both
   budget modes with one loop. Area budgets land just above target, overshooting under 5%.
+- **Neighbours are judged by distance, not strict intersection** (`decisions.md` 044).
+  QuPath's cell segmentation leaves a **sub-pixel gap** between adjacent cells: on the real
+  8537-cell export the median boundary-to-boundary gap to the nearest neighbour is 0.57 px
+  and only 4% of cells actually touch. So `predicate="intersects"` found 350 pairs where
+  `dwithin` at 1 px finds 26 336, involving 8213 of 8537 shapes. The default
+  `DEFAULT_NEIGHBOUR_DISTANCE_PX` is 1.0 and is user-adjustable; zero reverts to strict
+  intersection and will report almost nothing. Cost 0.09 s at 1 px over 8537 shapes.
 - **Adjacency is a strong preference, not a rule** (`decisions.md` 042). Conflicting
   candidates are deferred and used only once the non-conflicting ones run out, because a dense
   class cannot always fill a large budget without touching and under-delivering silently
@@ -284,6 +291,8 @@ categoricals × replicate count, cycling 6 hard-coded colours as Java signed int
 - Adjacency spans replicates: the laser cuts a shared boundary regardless of which well
   either cell goes to. Verified on a 20-square touching chain whose largest non-touching set
   is 10: asking for 10 gives 0 conflicts, asking for 12 still delivers 12 and reports 8.
+  On the real export, 900 of 3193 Tumor cells selects with 0 conflicts; 2700 of 3193 reports
+  2206, which is genuinely unavoidable at 85% of a dense class.
 - **Seed is exposed and recorded** in `provenance.json`, so a selection can be reported in a
   methods section and reproduced.
 - `model.plan_from_selection` assigns one well per `class_r<replicate>` group, groups sorted so

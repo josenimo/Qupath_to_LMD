@@ -26,6 +26,10 @@ from qupath_to_lmd.model import CLASS_NAME
 
 GRID_SEARCH_STEPS = 40
 
+# Two shapes closer than this are treated as neighbours. Not zero, because QuPath segmentation
+# leaves a sub-pixel gap between cells that are adjacent in every sense that matters.
+DEFAULT_NEIGHBOUR_DISTANCE_PX = 1.0
+
 WITH_NEIGHBOUR = "neighbour_also_collected"
 
 
@@ -42,6 +46,7 @@ class SelectionParams:
 
     mode: SelectionMode = SelectionMode.SPREAD
     avoid_adjacent: bool = True
+    neighbour_distance_px: float = DEFAULT_NEIGHBOUR_DISTANCE_PX
     seed: int = 0
 
 
@@ -97,16 +102,27 @@ def grid_bins(xy: numpy.ndarray, target_bins: int) -> tuple[numpy.ndarray, numpy
     return inverse.ravel(), (unique + 0.5) * size
 
 
-def adjacency(gdf: geopandas.GeoDataFrame) -> dict:
-    """Which shapes touch or overlap which, on the original QuPath geometry.
+def adjacency(gdf: geopandas.GeoDataFrame, distance_px: float = DEFAULT_NEIGHBOUR_DISTANCE_PX) -> dict:
+    """Which shapes are neighbours, on the original QuPath geometry.
+
+    Neighbours are shapes within `distance_px` of each other, **not** shapes that strictly
+    intersect. QuPath's cell segmentation leaves a sub-pixel gap between adjacent cells — on
+    a real 8537-cell export the median boundary-to-boundary gap to the nearest neighbour is
+    0.57 px and only 4% of cells actually touch — so a strict `intersects` test finds 350
+    pairs where a 1 px tolerance finds 26 336, involving 8213 of the 8537 shapes. Visually
+    adjacent cells must count as neighbours or the check is meaningless (`decisions.md` 044).
 
     Evaluated before any smoothing or dilation (`decisions.md` 013), so the verdict does not
-    depend on export settings chosen later. Always computed, even when the user allows
-    adjacent shapes, because the count of collected shapes with a collected neighbour is
-    reported either way.
+    depend on export settings chosen later. Always computed, even when the user permits
+    neighbours, because the count of collected shapes with a collected neighbour is reported
+    either way.
     """
     geometries = gdf.geometry.to_numpy()
-    pairs = shapely.STRtree(geometries).query(geometries, predicate="intersects")
+    tree = shapely.STRtree(geometries)
+    if distance_px > 0:
+        pairs = tree.query(geometries, predicate="dwithin", distance=distance_px)
+    else:
+        pairs = tree.query(geometries, predicate="intersects")
     positions = gdf.index.to_numpy()
 
     neighbours: dict = {}
@@ -114,7 +130,9 @@ def adjacency(gdf: geopandas.GeoDataFrame) -> dict:
         if left != right:
             neighbours.setdefault(positions[left], set()).add(positions[right])
 
-    logger.info(f"Adjacency: {len(neighbours)} of {len(gdf)} shapes touch at least one other")
+    logger.info(
+        f"Adjacency within {distance_px}px: {len(neighbours)} of {len(gdf)} shapes have a neighbour"
+    )
     return neighbours
 
 
@@ -188,12 +206,12 @@ def select(
         raise ValueError("An area budget needs the image scale (µm per pixel).")
 
     logger.info(
-        f"Selecting: mode={params.mode.value}, avoid adjacent={params.avoid_adjacent}, "
-        f"seed={params.seed}, budget in {budget_mode.unit}"
+        f"Selecting: mode={params.mode.value}, avoid adjacent={params.avoid_adjacent} "
+        f"within {params.neighbour_distance_px}px, seed={params.seed}, budget in {budget_mode.unit}"
     )
 
     areas = gdf.geometry.area * (pixel_size_um or 1.0) ** 2
-    neighbours = adjacency(gdf)
+    neighbours = adjacency(gdf, params.neighbour_distance_px)
     generator = numpy.random.default_rng(params.seed)
 
     replicate_of = pandas.Series(pandas.NA, index=gdf.index, dtype="Int64")
@@ -236,7 +254,7 @@ def select(
     )
     logger.success(
         f"Selected {result.n_selected} shapes across {len(achieved_table)} replicates; "
-        f"{total_conflicts} of them touch another collected shape"
+        f"{total_conflicts} of them have a collected neighbour"
     )
     return result
 
@@ -327,5 +345,5 @@ def _count_collected_neighbours(
         counts.append(sum(1 for position in members if position in conflicting))
 
     table[WITH_NEIGHBOUR] = counts
-    logger.debug(f"{len(conflicting)} collected shapes touch another collected shape")
+    logger.debug(f"{len(conflicting)} collected shapes have a collected neighbour")
     return table

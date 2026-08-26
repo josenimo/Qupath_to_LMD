@@ -212,7 +212,7 @@ def capacity_step(budgets: list[budget.ClassBudget], step: str = "7") -> dict:
 
 def _selection_params(step: str) -> selection.SelectionParams:
     """Mode, the adjacency constraint, and the seed that makes a selection reproducible."""
-    mode_column, adjacency_column, seed_column = st.columns([3, 3, 2])
+    mode_column, adjacency_column, distance_column, seed_column = st.columns([3, 3, 2, 1])
 
     with mode_column:
         mode = st.radio(
@@ -232,16 +232,31 @@ def _selection_params(step: str) -> selection.SelectionParams:
 
     with adjacency_column:
         avoid_adjacent = st.checkbox(
-            "Avoid collecting shapes that touch each other",
+            "Avoid collecting neighbouring shapes",
             value=True,
             key=f"avoid_adjacent_{step}",
             help=(
                 "Neighbouring cells share a cut boundary, so collecting both risks material "
                 "from one ending up in the other's well. This is a strong preference, not a "
                 "guarantee: in dense tissue a large budget cannot always be filled without "
-                "touching, and under-delivering would be worse. Whatever remains is counted "
+                "neighbours, and under-delivering would be worse. Whatever remains is counted "
                 "in the table below. Judged across the whole collection, so two replicates "
                 "cannot take neighbouring cells either."
+            ),
+        )
+
+    with distance_column:
+        neighbour_distance = st.number_input(
+            "Neighbour distance (px)",
+            min_value=0.0,
+            max_value=50.0,
+            value=selection.DEFAULT_NEIGHBOUR_DISTANCE_PX,
+            step=0.5,
+            key=f"neighbour_distance_{step}",
+            help=(
+                "Shapes closer than this count as neighbours. Not zero by default: QuPath "
+                "segmentation leaves a sub-pixel gap between cells that are adjacent in every "
+                "sense that matters, so a strict zero would find almost none of them."
             ),
         )
 
@@ -251,7 +266,18 @@ def _selection_params(step: str) -> selection.SelectionParams:
             help="Same seed, same selection. Recorded in provenance.json so you can report it.",
         )
 
-    return selection.SelectionParams(mode=mode, avoid_adjacent=avoid_adjacent, seed=int(seed))
+    if st.session_state.pixel_size_um and neighbour_distance:
+        st.caption(
+            f"A neighbour distance of {neighbour_distance:g} px is "
+            f"{neighbour_distance * st.session_state.pixel_size_um:.2f} µm at your image scale."
+        )
+
+    return selection.SelectionParams(
+        mode=mode,
+        avoid_adjacent=avoid_adjacent,
+        neighbour_distance_px=float(neighbour_distance),
+        seed=int(seed),
+    )
 
 
 def selection_step(budgets, settings: dict, pixel_size_um: float | None, step: str = "8") -> None:
@@ -297,14 +323,14 @@ def _report_selection(result: selection.SelectionResult, mode: budget.BudgetMode
     conflicts = result.n_with_collected_neighbour
     if conflicts:
         st.warning(
-            f"**{conflicts} of the {result.n_selected:,} collected shapes touch another shape "
-            "that is also being collected** — see the last column. Those pairs share a cut "
-            "boundary, so material from one may end up in the other's well. The budget was "
-            "filled anyway rather than under-delivering. To reduce it, ask for fewer shapes "
-            "per replicate, fewer replicates, or accept it as a known limit of this density."
+            f"**{conflicts} of the {result.n_selected:,} collected shapes have a neighbour that "
+            "is also being collected** — see the last column. Those pairs share a cut boundary, "
+            "so material from one may end up in the other's well. The budget was filled anyway "
+            "rather than under-delivering. To reduce it, ask for fewer shapes per replicate, "
+            "fewer replicates, or accept it as a limit of this tissue's density."
         )
     else:
-        st.success("No collected shape touches another collected shape.")
+        st.success("No collected shape has a neighbour that is also being collected.")
 
 
 def _preview_selection(result: selection.SelectionResult) -> None:
@@ -320,8 +346,7 @@ def _preview_selection(result: selection.SelectionResult) -> None:
     st.pyplot(figure, width="content")
     st.caption(
         "Classes are merged here so you can judge whether the replicates are spread and "
-        "comparable. Replicates drawn from the same grid square sit next to each other by "
-        "design — untick *allow touching shapes* above if that is a problem for cutting."
+        "comparable across the tissue."
     )
 
 
@@ -343,7 +368,8 @@ def _export_selection(result, settings: dict, params: selection.SelectionParams,
             "step_row": settings["step_row"],
             "step_col": settings["step_col"],
             "selection_mode": params.mode.value,
-            "allow_adjacent": params.allow_adjacent,
+            "avoid_adjacent": params.avoid_adjacent,
+            "neighbour_distance_px": params.neighbour_distance_px,
             "seed": params.seed,
             "budget_mode": st.session_state.budget_mode,
             "budgets": st.session_state.budgets,
