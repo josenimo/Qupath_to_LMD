@@ -260,3 +260,25 @@ with magnification (0.35 µm at 0.347 µm/px, ~1.7 µm on a 4× overview) and th
 therefore means nothing physical on its own.
 **Alternatives rejected:** Blocking on the LMD7 spec figure — would stall Phase 5 on a
 detail the shape-relative warning handles better anyway.
+
+## 019 — Smoothing default stays simplify(1) in pixels; explain and let users decide
+**Date:** 2026-08-26 · **Status:** active · **supersedes 018, and the µm part of 010**
+**Decision:** Jose's call. The simplification tolerance keeps its current value and unit —
+shapely Douglas-Peucker, **1 pixel** — and is exposed with a plain explanation of what it
+does. No µm conversion, no shape-relative warning threshold. The user decides.
+**Why:** The default is battle-tested across 60+ users and changing it would alter output
+for everyone for a theoretical gain. Explaining a parameter is the transparency this app
+owes its users (003); tutoring them with a derived threshold is not. 018 was overthinking a
+default that already works.
+**Alternatives rejected:** 018's µm-with-warning scheme, and 010's µm framing — both
+withdrawn. The observation behind them is still true (a pixel tolerance means different
+physical distances at different magnifications) but it belongs in the on-screen
+explanation, not in the units or in a warning.
+
+## 020 — Multi-slide-into-one-plate deferred
+**Date:** 2026-08-26 · **Status:** active
+**Decision:** Jose is deferring the multiple-slides-into-one-plate question to think about.
+Not designed for in the current phases; `ROADMAP.md` open question 5 keeps the context.
+**Why:** It affects how well assignment is scoped (per file vs across files) and so is
+better answered before Phase 3 hardens well assignment than retrofitted after — but it does
+not block Phases 0–2.

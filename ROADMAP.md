@@ -204,15 +204,11 @@ image, replacing the separate `py-lmd` plot — one picture, drawn one way, befo
 Two parameters exposed with recommended defaults and an on-screen explanation of each
 (`decisions.md` 010):
 
-- **Smoothing / simplification tolerance.** Currently hard-coded `simplify(1)`: shapely
-  Douglas-Peucker with a tolerance of one *pixel*, meaning "the outline may move by up to
-  1 px". Because it is in pixels, the physical size of that licence changes with the
-  objective — 0.35 µm on the demo file at 0.347 µm/px, but ~1.7 µm on a 4× overview.
-  Same code, same number, 5× different effect on the tissue. So: express it in **µm**
-  (`decisions.md` 018), default 0.5 µm, with the tolerance shown as a fraction of the
-  median shape diameter and a **warning when it exceeds ~2%** of it. That makes the
-  parameter self-calibrating — safe on mini-bulk annotations, loud on single cells, without
-  needing an instrument spec sheet.
+- **Smoothing / simplification tolerance.** Stays as it is today: shapely Douglas-Peucker
+  in **pixels, default 1** (`decisions.md` 019). What changes is that the number becomes
+  visible and editable instead of hard-coded, with a plain-language explanation next to it —
+  the outline may move by up to this many pixels, higher values mean fewer vertices and
+  faster cutting, lower values follow the annotation more exactly. Then the user decides.
 - **Cut-path optimization.** `none` / `greedy` / `hilbert`, ordering shapes to cut down
   stage travel and keep focus stable. py-lmd already ships `tsp_greedy_solve` and
   `tsp_hilbert_solve` and both are importable from `lmd.lib`, but its `Collection` path —
@@ -245,10 +241,8 @@ Suggested order: **0 → 1 → 2 → 3 → 4 → 5 → 6**, with 5 promoted on r
 
 Not blocking, but they will need answers as the phases land.
 
-1. **LMD7 positioning precision** — *no longer blocking.* The smoothing default is now
-   anchored to shape size instead (`decisions.md` 018). Still worth knowing: if the
-   instrument's real precision is coarser than 0.5 µm, the default can be relaxed and
-   cutting gets faster for free.
+1. ~~LMD7 positioning precision~~ — **closed.** The tolerance keeps its current pixel
+   default and is simply explained to the user (`decisions.md` 019).
 2. ~~Replicate spatial strategy~~ — **settled**: spread and interleaved
    (`decisions.md` 015), obtained structurally by the binning scheme in Phase 4.
 3. **Is a dilation step coming?** Defining adjacency as "pre-dilation" implies one may be.
@@ -256,6 +250,7 @@ Not blocking, but they will need answers as the phases land.
    constraint on — that would need saying on screen when it happens.
 4. **Measurement-ranked selection** (take the top N by Ki67, panCK, …) is out of scope now,
    but the data supports it and `selection.py` should not be built in a way that forecloses it.
-5. **Multiple slides into one plate** — README FAQ 6 tells users to do this by hand with a
-   shared samples-and-wells scheme. The new workflow generates well assignments per file,
-   which makes that manual recipe harder, not easier. Worth designing for explicitly.
+5. **Multiple slides into one plate** — **deferred by Jose**, to think about. Context for
+   when we return to it: README FAQ 6 tells users to do this by hand with a shared
+   samples-and-wells scheme, and the new workflow generates well assignments per file,
+   which makes that manual recipe harder rather than easier.
