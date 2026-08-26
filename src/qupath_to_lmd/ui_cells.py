@@ -1,25 +1,35 @@
 """The cell-segmentation workflow: pick classes, replicates, and how much to collect.
 
-Phases 0–2 are in place: routing, image scale, and per-class statistics with a class
-overview. Replicates, budgets and the selection engine arrive in Phases 3–5; see ROADMAP.md.
+Phases 0–3 are in place: routing, image scale, per-class statistics, and replicates with
+budgets. The selection engine itself is Phase 4; see ROADMAP.md.
 """
 
+import hashlib
+
+import pandas
 import streamlit as st
 from loguru import logger
 
-from qupath_to_lmd import plot, stats, ui_shared
+from qupath_to_lmd import budget, plot, stats, ui_shared
 
 
-def class_selection_step(pixel_size_um: float, step: str = "5") -> list[str]:
+def class_selection_step(pixel_size_um: float | None, step: str = "5") -> list[str]:
     """Show what each class holds, then let the user choose which ones to collect."""
     gdf = st.session_state.gdf
 
     st.markdown(f"## Step {step}: Choose which classes to collect")
-    st.markdown(
-        "Areas below are computed from the shapes themselves and the image scale you "
-        "entered, so they are real areas of tissue. Use them to judge what is worth "
-        "collecting before deciding on amounts."
-    )
+    if pixel_size_um:
+        st.markdown(
+            "Areas below are computed from the shapes themselves and the image scale you "
+            "entered, so they are real areas of tissue. Use them to judge what is worth "
+            "collecting before deciding on amounts."
+        )
+    else:
+        st.markdown(
+            "Without an image scale only shape counts can be shown, which is all you need if "
+            "you intend to collect a number of cells. Enter a scale above if you would rather "
+            "work in areas."
+        )
 
     table = stats.class_statistics(gdf, pixel_size_um=pixel_size_um)
     display = stats.for_display(table)
@@ -51,10 +61,10 @@ def class_selection_step(pixel_size_um: float, step: str = "5") -> list[str]:
         return []
 
     kept = table.loc[selected]
-    st.write(
-        f"**{int(kept['shapes'].sum()):,} shapes** across {len(selected)} classes, "
-        f"totalling **{kept['area_total_um2'].sum():,.{stats.DECIMALS}f} µm²** of tissue."
-    )
+    summary = f"**{int(kept['shapes'].sum()):,} shapes** across {len(selected)} classes"
+    if "area_total_um2" in kept.columns:
+        summary += f", totalling **{kept['area_total_um2'].sum():,.{stats.DECIMALS}f} µm²** of tissue"
+    st.write(summary + ".")
     return selected
 
 
@@ -80,30 +90,152 @@ def overview_step(selected: list[str]) -> None:
     )
 
 
+def _budget_mode(pixel_size_um: float | None) -> budget.BudgetMode:
+    """Let the user choose what a budget counts. Area needs a scale; cells never do."""
+    labels = {
+        budget.BudgetMode.CELLS: "Number of cells per replicate",
+        budget.BudgetMode.AREA: "Area of tissue per replicate (µm²)",
+    }
+    options = [budget.BudgetMode.CELLS]
+    if pixel_size_um:
+        options.append(budget.BudgetMode.AREA)
+    else:
+        st.caption(
+            "Budgeting by area needs the image scale from step 4. Collecting by number of "
+            "cells works without it."
+        )
+
+    return st.radio(
+        "Budget by",
+        options=options,
+        format_func=lambda mode: labels[mode],
+        horizontal=True,
+        key="budget_mode_choice",
+    )
+
+
+def budgets_step(selected: list[str], pixel_size_um: float | None, step: str = "6") -> list[budget.ClassBudget]:
+    """Replicates and per-replicate amount for each class, with a feasibility check."""
+    st.markdown(f"## Step {step}: Replicates and amounts")
+    st.markdown(
+        "Each replicate of each class is collected into its own well. Set how many "
+        "replicates you want and how much goes into each one."
+    )
+
+    mode = _budget_mode(pixel_size_um)
+    table = stats.class_statistics(st.session_state.gdf, pixel_size_um=pixel_size_um)
+    supply = table.loc[selected, mode.stats_column]
+
+    # Default to the whole class in a single replicate — the same thing the annotations
+    # workflow would do — so the starting point is neutral rather than an invented number.
+    editable = pandas.DataFrame(
+        {
+            budget.DISPLAY_COLUMNS[budget.REPLICATES]: 1,
+            budget.DISPLAY_COLUMNS[budget.PER_REPLICATE]: supply.round(stats.DECIMALS),
+        },
+        index=supply.index,
+    )
+    # A key tied to the selection and mode, so changing either gives a fresh editor rather
+    # than leaving rows from the previous one behind.
+    signature = hashlib.md5(("|".join(sorted(selected)) + mode.value).encode()).hexdigest()[:8]
+    edited = st.data_editor(
+        editable,
+        width="stretch",
+        key=f"budget_editor_{signature}",
+        column_config={
+            budget.DISPLAY_COLUMNS[budget.REPLICATES]: st.column_config.NumberColumn(
+                budget.DISPLAY_COLUMNS[budget.REPLICATES], min_value=1, step=1, format="%d"
+            ),
+            budget.DISPLAY_COLUMNS[budget.PER_REPLICATE]: st.column_config.NumberColumn(
+                f"Per replicate ({mode.unit})", min_value=0.0, format=f"%.{stats.DECIMALS}f"
+            ),
+        },
+    )
+
+    budgets = [
+        budget.ClassBudget(
+            class_name=str(class_name),
+            replicates=int(row[budget.DISPLAY_COLUMNS[budget.REPLICATES]] or 1),
+            per_replicate=float(row[budget.DISPLAY_COLUMNS[budget.PER_REPLICATE]] or 0),
+        )
+        for class_name, row in edited.iterrows()
+    ]
+
+    _report_feasibility(table, budgets, mode)
+    st.session_state.budget_mode = mode.value
+    st.session_state.budgets = [vars(item) for item in budgets]
+    return budgets
+
+
+def _report_feasibility(table: pandas.DataFrame, budgets: list[budget.ClassBudget], mode: budget.BudgetMode) -> None:
+    """Show what each class is asked for against what it holds, and warn on shortfalls."""
+    check = budget.feasibility(table, budgets, mode)
+    st.dataframe(budget.for_display(check), width="stretch")
+
+    short = check[check[budget.SHORTFALL] > 0]
+    if not short.empty:
+        lines = "\n".join(
+            f"- **{name}**: asked for {row[budget.REQUIRED]:,.{stats.DECIMALS}f} {mode.unit}, "
+            f"has {row[budget.AVAILABLE]:,.{stats.DECIMALS}f} — enough for "
+            f"{int(row[budget.ACHIEVABLE])} full replicate(s)"
+            for name, row in short.iterrows()
+        )
+        st.warning(
+            f"{len(short)} class(es) cannot supply what you asked for:\n\n{lines}\n\n"
+            "You can continue — those replicates will be filled as far as the class allows — "
+            "or reduce the amount or the number of replicates."
+        )
+    else:
+        st.success("Every class can supply its budget.")
+
+    zero = [item.class_name for item in budgets if item.per_replicate <= 0]
+    if zero:
+        st.warning(f"Nothing will be collected for: {', '.join(zero)} — the amount is zero.")
+
+
+def capacity_step(budgets: list[budget.ClassBudget], step: str = "7") -> dict:
+    """Plate settings, and whether the plan fits on the plate."""
+    st.markdown(f"## Step {step}: Plate")
+    settings = ui_shared.plate_settings_step(step=step)
+
+    needed = budget.total_groups(budgets)
+    usable = len(settings["wells"])
+    st.write(f"This plan needs **{needed} wells**, one per replicate. This plate offers **{usable}**.")
+    if needed > usable:
+        st.warning(
+            f"{needed - usable} more wells are needed than the plate offers. Reduce the "
+            "replicates, lower the margin or spacing, or use a 384 well plate."
+        )
+    return settings
+
+
 def render(uploaded_file) -> None:
-    """The cell workflow as far as Phase 2 takes it."""
+    """The cell workflow as far as Phase 3 takes it."""
     pixel_size = ui_shared.pixel_size_step(step="4")
     st.divider()
 
     if st.session_state.gdf is None:
         st.info("Upload a GeoJSON to continue.")
         return
-    if pixel_size is None:
-        st.info("Enter the image scale above to continue — every area figure depends on it.")
-        return
 
     selected = class_selection_step(pixel_size, step="5")
-    if selected:
-        overview_step(selected)
+    if not selected:
+        return
+    overview_step(selected)
     st.divider()
 
-    st.markdown("## Step 6: Replicates and amounts")
+    budgets = budgets_step(selected, pixel_size, step="6")
+    st.divider()
+
+    capacity_step(budgets, step="7")
+    st.divider()
+
+    st.markdown("## Step 8: Select and export")
     st.info(
         "**Not built yet.** Coming next (see `ROADMAP.md`):\n\n"
-        "- **Phase 3** — replicates per class, and a budget per replicate as either a cell "
-        "count or a target area, with a feasibility check against the figures above\n"
-        "- **Phase 4** — the selection itself: spatially spread by default, optional "
-        "no-touching-cells constraint, and a preview of exactly what will be cut\n"
+        "- **Phase 4** — the selection itself: which cells fill each replicate, spatially "
+        "spread by default, with an optional no-touching-cells constraint and a preview of "
+        "exactly what will be cut\n"
         "- **Phase 5** — smoothing and cut-path options at export\n\n"
         "Until then, the annotations workflow can collect these shapes one class per well, "
         "including splitting a class into one well per cell."

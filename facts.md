@@ -45,7 +45,8 @@ src/qupath_to_lmd/
                                   measurements_frame, area_measurement_column
   plate.py                        plate shapes, acceptable_wells, layouts, saw parse/convert
   qc.py                           triangle_qc, validate_saw, pixel_size_qc (report objects)
-  stats.py                        class_statistics, for_display — per-class areas and density
+  stats.py                        class_statistics, for_display, reference_pixel_sizes
+  budget.py                       BudgetMode, ClassBudget, feasibility, total_groups
   plot.py                         plot_shapes — class overview, selection preview, QC image
   export.py                       build_collection, build_bundle, ORIENTATION_TRANSFORM
   extras.py                       QuPath classes.json generation
@@ -125,8 +126,8 @@ are shared, then the router dispatches to one of two workflows.
 
 **Shared:** 1 upload + QC · 2 workflow choice · 3 calibration points.
 **Legacy then continues:** 4 optional class split · 5 plate layout · 6 process and download.
-**Cells then continues:** 4 image scale (µm/px) · 5 class statistics and selection ·
-6 onwards not built yet.
+**Cells then continues:** 4 image scale (optional) · 5 class statistics and selection ·
+6 replicates and budgets · 7 plate and capacity · 8 onwards not built yet.
 
 Step numbers are passed into the `ui_shared` step functions rather than hard-coded, because
 the two workflows reach the shared steps at different points.
@@ -228,6 +229,27 @@ categoricals × replicate count, cycling 6 hard-coded colours as Java signed int
   global registry and Streamlit reruns would leak them.
 - Timings on the 14145-shape export: statistics 0.038 s, full polygon render 0.16 s.
 
+## Budgets and feasibility (Phase 3)
+
+- **Pixel size is optional** (`decisions.md` 038). Without it, `class_statistics` returns
+  shape counts alone and only the *cells* budget mode is offered, with a caption saying why.
+  Nothing expressible in cell counts is ever blocked.
+- `budget.BudgetMode` is `CELLS` or `AREA`; `mode.stats_column` maps to `shapes` or
+  `area_total_um2`, and `budget.feasibility` raises `KeyError` if that column is absent —
+  which is how an area budget without a scale fails, loudly, in the library rather than
+  silently in the UI.
+- `budget.feasibility` returns per class: replicates, per-replicate amount, total requested,
+  available, shortfall, and **how many whole replicates the class can actually fill**. That
+  last number is the actionable one.
+- Shortfalls **warn and continue** (003) — a user may knowingly accept a partly-filled
+  replicate.
+- The per-class editor defaults to **the whole class in a single replicate**, which is what
+  the annotations workflow would do. Neutral, and not an invented number.
+- `budget.total_groups` is the well count the plan needs, one well per replicate per class;
+  step 7 compares it against the usable wells of the chosen plate and warns if it exceeds them.
+- The `st.data_editor` key is an md5 of the sorted class selection plus the mode, so changing
+  either gives a fresh editor instead of leaving stale rows behind.
+
 ## Session state keys
 
 Initialised in the block at the top of `streamlit_app.py`. Any new key belongs here too.
@@ -239,6 +261,8 @@ Initialised in the block at the top of `streamlit_app.py`. Any new key belongs h
 | `workflow` | `'legacy'` \| `'cells'` — which workflow the router dispatched to |
 | `pixel_size_um` | µm per pixel, entered by the user; `None` until they do |
 | `selected_classes` | classes the cell workflow will collect; `None` means not chosen yet |
+| `budget_mode` | `'cells'` \| `'area'` — what the per-replicate amount counts |
+| `budgets` | list of `ClassBudget` as dicts: class, replicates, per-replicate amount |
 | `view_mode` | `'default'` \| `'samples'` — which plate table is rendered |
 | `gdf` | the working GeoDataFrame (points removed, `classification_name` added) |
 | `geojson_report` | `GeojsonReport` from the last read, re-rendered on every rerun |

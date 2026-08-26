@@ -23,6 +23,8 @@ DEFAULTS = {
     "calib_array": None,
     "pixel_size_um": None,
     "selected_classes": None,
+    "budget_mode": None,
+    "budgets": None,
     "saw": None,
     "use_plate_wells": True,
     "file_name": None,
