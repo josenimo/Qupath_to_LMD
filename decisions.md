@@ -478,3 +478,93 @@ unreachable while a file without calibration points is loaded. Removing the file
 it. Worth revisiting by moving Extras above the workflow if anyone is bitten.
 **Verified:** six cases — zero, one and two calibration points, three identical, three
 collinear, and three valid — with only the valid case proceeding.
+
+## 032 — Phase 2 delivered: per-class statistics and a class overview
+**Date:** 2026-08-26 · **Status:** active
+**Decision:** `stats.py` computes per-class shape counts, areas (total, median, quartiles,
+min, max), convex-hull spread and density; `plot.py` draws the shapes with the chosen
+classes coloured and the rest grey. The cell workflow shows the table, an optional
+area-floor count, a class multiselect defaulting to everything, and the overview figure.
+**Why:** `ROADMAP.md` Phase 2 — a user cannot sensibly choose budgets without seeing what
+each class actually holds. Confirms 029 in practice: areas derived from geometry × µm/px
+match QuPath's own `Cell: Area` to a median ratio of 0.9998 over 121 cells, so nothing
+depends on measurements being exported.
+**Details worth keeping:** the area floor **counts** small shapes rather than removing them,
+because a threshold for "too small to be worth collecting" is the scientist's judgement, not
+ours (003). Density uses the hull of centroids rather than of full geometries — far cheaper,
+and it degrades to `NaN` instead of infinity for classes with fewer than three shapes.
+Excluded classes are drawn grey rather than hidden, so what is being left out stays visible.
+**Alternatives rejected:** filtering by the area floor automatically — silently drops data
+the user classified deliberately. Hiding excluded classes — makes an exclusion invisible at
+exactly the moment it matters.
+
+## 033 — Plotting uses Figure, not pyplot, and Okabe-Ito colours
+**Date:** 2026-08-26 · **Status:** active
+**Decision:** `plot.py` constructs `matplotlib.figure.Figure` objects directly and never
+imports `pyplot`. Qualitative colours come from the Okabe-Ito palette, assigned by sorted
+class name. Above 20 000 shapes, one dot is drawn per shape instead of its outline.
+**Why:** pyplot keeps every figure in a global registry, and Streamlit reruns the whole
+script on every widget change, so a pyplot-based preview would leak figures for the lifetime
+of the session — on a free-tier deployment with a memory ceiling that matters. Okabe-Ito
+stays distinguishable under the common forms of colour blindness, which a diagnostic picture
+of which tissue gets cut ought to be. Sorting the assignment means a class does not change
+colour when the selection changes. The dot fallback is measured, not guessed: polygon
+rendering is ~1.8 s at 50 000 shapes and ~7.6 s at 200 000, against 0.14 s for centroids.
+**Alternatives rejected:** an interactive plotting library (see 017) — still deferred.
+Matplotlib's default tab10 — not colourblind-safe.
+
+## 034 — Phase 2 statistics table: µm² throughout, std dev, no density, no area floor
+**Date:** 2026-08-26 · **Status:** active · revises 032
+**Decision:** Jose's review of the Phase 2 table. Total area is reported in **µm²**, not mm².
+The convex-hull "Spread" column is replaced by the **standard deviation of shape area**. The
+**density** column is removed. The optional area-floor count is **removed** entirely.
+**Why:** every other column was already in µm², so mm² for the total meant reading two units
+in one row. Standard deviation belongs with the median and quartiles as a dispersion measure
+of the same quantity, where the hull spread was answering a different question nobody had
+asked. Density followed the hull and went with it. The area floor was a global threshold
+bolted onto a per-class table, and a minimum shape area is really a *selection criterion* —
+it belongs with the per-class replicate and budget inputs in Phase 3, not here.
+**Consequence:** `_extent_mm2` and its shapely hull machinery are gone, which also removes
+the only part of `stats.py` that was more than a groupby.
+
+## 035 — The plot legend sits outside the axes
+**Date:** 2026-08-26 · **Status:** active
+**Decision:** `plot.plot_shapes` places the legend with
+`figure.legend(loc="outside right upper")` rather than inside the axes, and the default
+figure is wider than tall to give it a column.
+**Why:** Jose reported the legend overlapping the figure. An inside legend covers tissue,
+and the tissue is the entire point of the picture — for a class with shapes in the top-right
+corner the legend would hide exactly what the user is trying to judge. The `outside ...`
+locations require constrained layout, which the figure already uses.
+
+## 036 — Areas are displayed to two decimal places
+**Date:** 2026-08-26 · **Status:** active
+**Decision:** `stats.for_display` rounds every area column to `stats.DECIMALS` (2) decimal
+places and the UI formats them `%.2f`. Shape counts are left exact. The underlying frame
+keeps full precision; only the display is trimmed, and the columns stay numeric so the table
+still sorts numerically.
+**Why:** the raw values carry a long float tail — `147479.0769032064 µm²` — which reads as
+precision that segmentation boundaries and a hand-entered pixel size cannot support.
+Two decimals is enough to distinguish any two shapes anyone cares about.
+**Note:** I first implemented this as two *significant* figures, which turned 147479.08 into
+150000 — far coarser than intended and a real loss of information on totals. Jose clarified
+he meant decimals. Recorded because the two readings of "fewer sig figs" differ by orders of
+magnitude, and the wrong one silently destroys data in a table people make decisions from.
+
+## 037 — A magnification reference table beside the pixel size input
+**Date:** 2026-08-26 · **Status:** active
+**Decision:** Jose's request. The µm/px step shows a reference table to the right of the
+input: objectives 4×–63× against two representative camera sensor pitches (3.45 and 6.5 µm),
+each cell computed as `pitch / magnification`. A warning next to it states that magnification
+does not determine pixel size.
+**Why:** users often know their objective but not their scale, and would otherwise guess or
+abandon the step. The table is deliberately built from the formula with two pitches rather
+than quoting one "typical" value per magnification, because the whole point is that the same
+20× objective spans 0.173–0.325 µm/px across common cameras — a 1.9× spread visible in the
+table itself. A single authoritative-looking number per magnification would invite exactly
+the mistake the warning is trying to prevent, and would be a claim about instruments we have
+no basis for.
+**Alternatives rejected:** a single "typical µm/px" column — looks authoritative, is wrong
+for most microscopes, and a 2× error in pixel size is a 4× error in every area budget.
+Auto-filling the input from a chosen magnification — 011 and 029 already settled that the
+user enters this value deliberately; prefilling it from a guess undermines that.
