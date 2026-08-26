@@ -14,6 +14,15 @@ from loguru import logger
 from qupath_to_lmd import export, extras, geojson, plate, qc
 from qupath_to_lmd.model import CLASS_NAME
 
+# The rendered number input carries `step` as an HTML attribute and browsers snap entries
+# to that grid, so the step has to be as fine as the format can display or typed values get
+# rounded. Four decimals matches what QuPath reports for pixel width.
+PIXEL_SIZE_DECIMALS = 4
+PIXEL_SIZE_STEP = 10**-PIXEL_SIZE_DECIMALS
+PIXEL_SIZE_FORMAT = f"%.{PIXEL_SIZE_DECIMALS}f"
+PIXEL_SIZE_MIN = PIXEL_SIZE_STEP
+PIXEL_SIZE_MAX = 100.0
+
 WORKFLOWS = {
     "legacy": "Annotations — one class is one sample is one well",
     "cells": "Cell segmentation — pick classes, replicates and how much to collect",
@@ -189,17 +198,31 @@ def pixel_size_step(step: str = "4") -> float | None:
         "themselves, not from QuPath measurements."
     )
 
+    # Three things matter for this input to behave:
+    #  - value=None starts it genuinely empty and returns None until the user types, so
+    #    there is no 0.0 sentinel to confuse with a real entry.
+    #  - value= is NOT re-passed on later reruns: with key= set, the widget's own state is
+    #    the source of truth, and re-passing value fights it and snaps the field back.
+    #  - step must match the displayed precision. The rendered HTML input carries
+    #    step as an attribute and browsers snap off-grid entries to it, so a coarser step
+    #    than the format turns a typed 0.3467 into 0.35.
     entered = st.number_input(
         "Micrometres per pixel (µm/px)",
-        min_value=0.0,
-        max_value=100.0,
-        value=float(st.session_state.pixel_size_um or 0.0),
-        step=0.01,
-        format="%.4f",
+        min_value=PIXEL_SIZE_MIN,
+        max_value=PIXEL_SIZE_MAX,
+        value=None,
+        step=PIXEL_SIZE_STEP,
+        format=PIXEL_SIZE_FORMAT,
         key="pixel_size_input",
+        placeholder="e.g. 0.3467",
+        help=(
+            f"Accepted to {PIXEL_SIZE_DECIMALS} decimal places, between {PIXEL_SIZE_MIN} and "
+            f"{PIXEL_SIZE_MAX:g} µm/px. Type the value directly — the arrows step by "
+            f"{PIXEL_SIZE_STEP:g}."
+        ),
     )
 
-    if not entered:
+    if entered is None:
         st.info("Enter the pixel size to continue.")
         return None
 

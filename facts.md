@@ -235,6 +235,17 @@ Initialised in the block at the top of `streamlit_app.py`. Any new key belongs h
   stop. Only `mock_streamlit.py` mentions `st` at all, for notebook use.
 - Every meaningful step logs via loguru, and the app surfaces the same information via
   `st.*`. The log file goes into the download zip, so log lines are part of the support story.
+- **`st.number_input` rules, learned the hard way** (a value snapping back after entry):
+  - Never pass `value=` on reruns to a widget that also has `key=`. With a key, the widget's
+    own state is the source of truth; re-seeding `value` from `session_state` fights it.
+    Pass `value=None` once and read the return value.
+  - `step` is rendered as the HTML input's `step` attribute and **browsers snap entries to
+    that grid**. A `step` coarser than `format` can display silently rounds typed input —
+    `step=0.01` with `format="%.4f"` turns 0.3467 into 0.35. Keep them matched.
+  - `value=None` makes the field start genuinely empty and return `None` until the user
+    types, which is better than a `0.0` sentinel that has to be told apart from a real entry.
+  - Pixel size is therefore `step=1e-4`, `format="%.4f"`, `min_value=1e-4` — see the
+    `PIXEL_SIZE_*` constants in `ui_shared.py`. Values with more than 4 decimals are rounded.
 - `ruff` configured in `pyproject.toml`: line-length 120, target py311, double quotes,
   google docstring convention, `E501` ignored.
 - No test suite in the repo (pytest was removed in `0530833`), though `pytest` is still a

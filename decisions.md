@@ -435,3 +435,24 @@ which is expensive in an app whose warnings are the safety mechanism (003). The 
 is a free bonus when the data allows it, not a prerequisite.
 **Consequence for Phase 2:** per-class statistics must derive area from geometry × µm/px,
 never from `Cell: Area`.
+
+## 030 — Pixel size input: empty until typed, 4 decimals, step matched to format
+**Date:** 2026-08-26 · **Status:** active
+**Decision:** The µm/px input starts empty (`value=None`) and returns `None` until the user
+types. It accepts 4 decimal places, with `step` set to `1e-4` to match `format="%.4f"`, and
+a minimum of `1e-4` so zero is not enterable. `value=` is never re-passed on reruns.
+**Why:** Jose reported the field snapping back to a different number after entry. Three
+compounding causes, all mine: `value=` was re-seeded from `session_state` on every rerun
+while the widget also had a `key=`, so the two fought; `step=0.01` was coarser than
+`format="%.4f"`, and since Streamlit renders `step` as the HTML input's `step` attribute,
+browsers snap off-grid entries to it — typing 0.3467 with a 0.01 grid gives 0.35; and the
+`0.0` initial value had to be distinguished from a real entry by `if not entered`, which
+also treats a legitimate 0 as absent.
+**Cost accepted:** a pixel size with more than 4 decimals is rounded, e.g. 0.34675 becomes
+0.3468. Four decimals is what QuPath reports for pixel width, so this is precise enough in
+practice, and the field's help text states the limit rather than leaving it to be discovered.
+**Alternatives rejected:** a free-text field with our own float parsing — accepts any
+representation including scientific notation and cannot snap, but gives up the numeric
+keyboard, the arrows and range validation for a problem the matched step already solves.
+Worth revisiting if snapping is ever reported again, since it is the only option that removes
+the browser from the equation entirely.
