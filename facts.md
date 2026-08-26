@@ -262,17 +262,28 @@ categoricals × replicate count, cycling 6 hard-coded colours as Java signed int
   is unusable inside a Streamlit rerun; the grid is ~0.03 s at any k and separates better
   (min pairwise gap 118 px vs 82 at k=100). `grid_bins` binary-searches the cell size until
   the occupied-cell count lands near the target.
-- **Replicates are interleaved by construction**: bins are ordered nearest-to-centre and
-  replicate *i* takes the *i*-th member of each bin. Verified on real data — replicate
-  centroids of one class agree to 3.3% of the class extent, so they are statistical repeats,
-  not spatial partitions (`decisions.md` 015).
-- **Filling is round-robin across bins** until the budget is met, which serves both modes with
-  one loop: a count budget completes in one pass, an area budget keeps circling until the
-  target is reached. Area budgets land just above target, overshooting under 5%.
-- **Adjacency is global**, not per replicate — the laser cuts a shared boundary regardless of
-  which well each cell goes to. Built with `shapely.STRtree(...).query(predicate="intersects")`
-  on the original QuPath geometry (`decisions.md` 013), 0.04 s over 8537 shapes, 350 touching
-  pairs. Verified: with the constraint on, zero selected shapes touch; with it off, they do.
+- **One bin per shape in the whole class budget**, not per replicate (`decisions.md` 042).
+  Every collected shape is then roughly a bin apart, and the shapes are dealt across
+  replicates in a spatially shuffled order. The earlier design binned per replicate and took
+  the *i*-th nearest to each bin centre, which put replicates 1–3 on top of each other:
+  measured, 100% of collected shapes had their nearest collected neighbour in a *different*
+  replicate, with a 12 px minimum gap. Now the median nearest-neighbour distance is 104 px,
+  2.2× better than random, and replicate co-location is gone.
+- **Replicates stay interleaved**: over 6 seeds the spread of replicate centroids is 5.6% of
+  the class extent against a shuffled-label null of 5.8% — statistically indistinguishable
+  from random assignment, which is what "interleaved rather than partitioned" means
+  (`decisions.md` 015).
+- **Filling is round-robin across replicates** as the stream is consumed, which serves both
+  budget modes with one loop. Area budgets land just above target, overshooting under 5%.
+- **Adjacency is a strong preference, not a rule** (`decisions.md` 042). Conflicting
+  candidates are deferred and used only once the non-conflicting ones run out, because a dense
+  class cannot always fill a large budget without touching and under-delivering silently
+  would be worse. The count of collected shapes touching another collected shape is **always
+  reported**, per replicate, whether or not the preference is on — so the adjacency graph is
+  built every time (0.04 s over 8537 shapes; that file has 350 touching pairs among 287 shapes).
+- Adjacency spans replicates: the laser cuts a shared boundary regardless of which well
+  either cell goes to. Verified on a 20-square touching chain whose largest non-touching set
+  is 10: asking for 10 gives 0 conflicts, asking for 12 still delivers 12 and reports 8.
 - **Seed is exposed and recorded** in `provenance.json`, so a selection can be reported in a
   methods section and reproduced.
 - `model.plan_from_selection` assigns one well per `class_r<replicate>` group, groups sorted so

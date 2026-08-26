@@ -646,3 +646,41 @@ at that step is whether the replicates are spread and comparable — the class o
 budgets, zero touching pairs under the adjacency constraint with a control proving touching
 pairs occur without it, area budgets overshooting under 5%, seed determinism, and a real XML
 build of 900 shapes and 7863 vertices.
+
+## 042 — Bins size the whole class budget, and adjacency is a preference
+**Date:** 2026-08-26 · **Status:** active · **supersedes the replicate scheme in 015/016/040**
+**Decision:** Jose's review of Phase 4. Three changes.
+1. The grid is sized to **one bin per shape in the whole class budget**, not per replicate,
+   and one shape is taken per bin. Replicates are then dealt from that spread set in a
+   spatially shuffled order.
+2. The adjacency setting is a **strong preference, not an obligation**. Conflicting
+   candidates are deferred and used only when the non-conflicting ones run out.
+3. The number of collected shapes touching another collected shape is **always reported**, per
+   replicate, whether or not the preference is on.
+**Why:** the previous scheme binned per replicate and gave replicate *i* the *i*-th nearest
+shape to each bin centre. That is co-location, not interleaving: measured on the real export,
+**100% of collected shapes had their nearest collected neighbour in a different replicate**,
+with a 12 px minimum gap. Jose spotted it in the preview. Sizing bins to the whole budget
+fixes it at the root — median nearest-neighbour distance is now 104 px, 2.2× better than
+random — while replicates stay interleaved (centroid spread 5.6% of extent against a
+shuffled-label null of 5.8%, i.e. indistinguishable from random assignment).
+On adjacency: in dense tissue a large budget cannot always be filled without touching, and
+silently under-delivering is worse than touching — the user asked for an amount. So the
+constraint relaxes and reports instead. Reporting unconditionally matters because a user who
+leaves the preference off still needs to know how much of their collection shares boundaries.
+**On the graph question:** the touching graph *is* what drives this — `shapely.STRtree` with
+an `intersects` predicate, consulted per candidate. What is deliberately not done is solving
+for a maximum independent set: that is NP-hard, and greedy rejection over a spread-ordered
+stream already reaches zero conflicts whenever the budget admits one, verified on a chain
+graph where the optimum is known exactly.
+**Verified:** 22 checks, including a 20-square touching chain with a known optimum of 10 —
+asking for 10 yields 0 conflicts, asking for 12 still delivers 12 and reports 8 conflicts.
+
+## 043 — The cell workflow shows the plate layout
+**Date:** 2026-08-26 · **Status:** active
+**Decision:** `ui_shared.plate_preview` renders the plate as a table with each group in its
+well, plus a download of the samples-and-wells scheme. The cell workflow calls it after well
+assignment; it replaces the raw dictionary in an expander.
+**Why:** Jose noticed the plate view present in the annotations workflow was missing from the
+cell workflow — an oversight in Phase 3/4, not a decision. The plate is how a user checks the
+layout against what they will physically handle, so a dictionary dump is not a substitute.

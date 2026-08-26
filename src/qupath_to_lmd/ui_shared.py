@@ -462,6 +462,23 @@ def _custom_saw_step(plate_type: str) -> None:
     _report_saw(report, plate_type, success=f"Custom samples and wells loaded and checked: {len(candidate)} classes.")
 
 
+def plate_preview(samples_and_wells: dict[str, str], plate_type: str) -> None:
+    """Show the plate with each group in its well, and offer the scheme as a download."""
+    if not samples_and_wells:
+        st.warning("No wells assigned yet.")
+        return
+
+    layout = plate.placement_dataframe(samples_and_wells, plate=plate_type)
+    st.dataframe(layout.style.map(plate.highlight(set(samples_and_wells))), width="stretch")
+    st.download_button(
+        label="Download samples and wells setup",
+        data=json.dumps(samples_and_wells, indent=4),
+        file_name="samples_and_wells.json",
+        mime="application/json",
+        key=f"saw_download_{plate_type}_{len(samples_and_wells)}",
+    )
+
+
 def export_step(settings: dict, build_plan, step: str = "6") -> None:
     """Process the collection and offer the download bundle.
 

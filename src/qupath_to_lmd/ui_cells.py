@@ -231,14 +231,17 @@ def _selection_params(step: str) -> selection.SelectionParams:
         )
 
     with adjacency_column:
-        allow_adjacent = st.checkbox(
-            "Allow touching shapes to be collected",
+        avoid_adjacent = st.checkbox(
+            "Avoid collecting shapes that touch each other",
             value=True,
-            key=f"allow_adjacent_{step}",
+            key=f"avoid_adjacent_{step}",
             help=(
-                "When unticked, no two collected shapes may touch or overlap, judged on the "
-                "original QuPath outlines. Neighbouring cells share a boundary, so cutting "
-                "both risks collecting parts of each into the wrong well."
+                "Neighbouring cells share a cut boundary, so collecting both risks material "
+                "from one ending up in the other's well. This is a strong preference, not a "
+                "guarantee: in dense tissue a large budget cannot always be filled without "
+                "touching, and under-delivering would be worse. Whatever remains is counted "
+                "in the table below. Judged across the whole collection, so two replicates "
+                "cannot take neighbouring cells either."
             ),
         )
 
@@ -248,7 +251,7 @@ def _selection_params(step: str) -> selection.SelectionParams:
             help="Same seed, same selection. Recorded in provenance.json so you can report it.",
         )
 
-    return selection.SelectionParams(mode=mode, allow_adjacent=allow_adjacent, seed=int(seed))
+    return selection.SelectionParams(mode=mode, avoid_adjacent=avoid_adjacent, seed=int(seed))
 
 
 def selection_step(budgets, settings: dict, pixel_size_um: float | None, step: str = "8") -> None:
@@ -291,11 +294,17 @@ def _report_selection(result: selection.SelectionResult, mode: budget.BudgetMode
             f"{len(short)} replicate(s) could not be filled completely:\n\n{lines}\n\n"
             "They will still be collected, just with less material than you asked for."
         )
-    if result.n_blocked_by_adjacency:
-        st.caption(
-            f"{result.n_blocked_by_adjacency} candidate shapes were skipped because they touch "
-            "a shape already being collected."
+    conflicts = result.n_with_collected_neighbour
+    if conflicts:
+        st.warning(
+            f"**{conflicts} of the {result.n_selected:,} collected shapes touch another shape "
+            "that is also being collected** — see the last column. Those pairs share a cut "
+            "boundary, so material from one may end up in the other's well. The budget was "
+            "filled anyway rather than under-delivering. To reduce it, ask for fewer shapes "
+            "per replicate, fewer replicates, or accept it as a known limit of this density."
         )
+    else:
+        st.success("No collected shape touches another collected shape.")
 
 
 def _preview_selection(result: selection.SelectionResult) -> None:
@@ -349,8 +358,8 @@ def _export_selection(result, settings: dict, params: selection.SelectionParams,
         )
 
     st.session_state.saw = samples_and_wells
-    with st.expander(f"Well assignment ({len(samples_and_wells)} wells)", expanded=False):
-        st.write(samples_and_wells)
+    st.markdown(f"**Plate layout — {len(samples_and_wells)} wells used**")
+    ui_shared.plate_preview(samples_and_wells, settings["plate_type"])
 
     ui_shared.export_step(settings, lambda _settings: plan, step="9")
 
