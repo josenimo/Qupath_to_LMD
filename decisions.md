@@ -788,3 +788,36 @@ Optimising the well visiting order against tissue positions would trade collecto
 stage travel; not attempted.
 **Also:** greedy's first call in a process costs ~14.7 s of numba compilation, then 0.1–0.6 s.
 It only runs on a button press and the help text says so.
+
+## 048 — Exclusions are reported by cause, not by count
+**Date:** 2026-08-26 · **Status:** active
+**Decision:** `CollectionPlan` gains two properties that split what `skipped` used to conflate.
+`not_selected` is shapes with no group at all; `unplaced` is shapes that belong to a group whose
+group got no well. The cell workflow states `not_selected` in a caption and the annotations
+workflow warns about it; `unplaced` warns in both. `plan_from_class_wells` now assigns a
+`group_key` only to classes present in the samples-and-wells scheme, so the two workflows
+classify exclusions identically.
+**Why:** Jose hit "6988 of 8537 shapes have no well and will not be cut" on a normal cell
+collection. In the annotations workflow that message means a class is missing from the scheme,
+which is worth a warning. In the cell workflow it means the shapes were not selected — which is
+the entire purpose of the workflow, so the warning fired on every single collection. Warning
+about the intended outcome is how a warning stops being read, and this app's warnings are its
+safety mechanism (003).
+**What genuinely warrants a warning in the cell workflow** is a shape the user *asked* to
+collect that will not be cut anyway because its group ran out of wells. That is now the
+`unplaced` case, and it replaced a duplicate check that lived in `ui_cells`.
+**Verified:** no change to the export — goldens identical — and 9 checks covering both
+classifications in both workflows.
+
+## 049 — The cell workflow needs no plate confirmation
+**Date:** 2026-08-26 · **Status:** active · records what 045 left implicit
+**Decision:** Confirmed by testing rather than changed. The cell workflow has no Confirm step
+because the well assignment is recomputed from the current plate settings on every rerun; a
+change to plate type, margin, spacing or the randomize toggle takes effect immediately, and the
+plate table directly under the options always shows what will actually be used.
+**Why recorded:** Jose asked whether a plate change he made had been tracked, which means the
+absence of a confirmation step reads as an absence of feedback. The behaviour is correct — the
+same settings re-derive the same assignment, and a changed setting propagates into the plan's
+wells, both now asserted — so the answer is that the plate table *is* the confirmation. If it
+still reads as ambiguous, the fix is a clearer statement next to the table rather than a
+Confirm button, which would only add a step that can be forgotten.

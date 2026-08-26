@@ -593,12 +593,7 @@ def _process(settings: dict, build_plan, tolerance: float, path_order) -> None:
         {"simplify_tolerance_px": tolerance, "path_order": path_order.value}
     )
 
-    skipped = plan.skipped
-    if not skipped.empty:
-        st.warning(
-            f"{len(skipped)} of {len(plan.shapes)} shapes have no well and will not be cut. "
-            f"Their classes: {', '.join(sorted(set(skipped[CLASS_NAME]))[:10])}"
-        )
+    _report_excluded(plan)
 
     try:
         result = export.build_collection(
@@ -631,6 +626,39 @@ def _process(settings: dict, build_plan, tolerance: float, path_order) -> None:
     st.image(result.image_path, caption="Your Contours", width="content")
     st.success("All files have been processed and are ready for download.")
     logger.success("All files processed and zipped successfully")
+
+
+def _report_excluded(plan) -> None:
+    """Say what will not be cut, distinguishing a mistake from the intended outcome.
+
+    In the cell workflow most shapes are deliberately not selected, so warning about them
+    would cry wolf on every single collection. What genuinely warrants a warning is a shape
+    the user asked to collect whose group ran out of wells.
+    """
+    unplaced = plan.unplaced
+    if not unplaced.empty:
+        groups = sorted(set(unplaced["group_key"]))
+        st.warning(
+            f"{len(unplaced)} shapes you asked to collect will **not** be cut, because their "
+            f"group got no well on this plate: {', '.join(groups[:8])}"
+            f"{' ...' if len(groups) > 8 else ''}. Reduce the replicates, lower the margin or "
+            "spacing, or use a larger plate."
+        )
+
+    not_selected = plan.not_selected
+    if not_selected.empty:
+        return
+
+    if plan.workflow == "cells":
+        st.caption(
+            f"{len(not_selected):,} of {len(plan.shapes):,} shapes are not part of this "
+            "collection, as intended — you asked for a subset."
+        )
+    else:
+        st.warning(
+            f"{len(not_selected)} of {len(plan.shapes)} shapes have no well and will not be "
+            f"cut. Their classes: {', '.join(sorted(set(not_selected[CLASS_NAME]))[:10])}"
+        )
 
 
 def _report_path(result, pixel_size_um: float | None) -> None:

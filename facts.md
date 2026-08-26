@@ -304,6 +304,11 @@ categoricals × replicate count, cycling 6 hard-coded colours as Java signed int
   2206, which is genuinely unavoidable at 85% of a dense class.
 - **Seed is exposed and recorded** in `provenance.json`, so a selection can be reported in a
   methods section and reproduced.
+- The cell workflow has **no confirm step**: the assignment is recomputed from the current
+  plate settings on every rerun, so changing the plate, margin, spacing or randomize toggle
+  takes effect immediately and the plate table under the options always shows what will be
+  used. Verified: the same settings re-derive the same assignment, and a change to plate type,
+  margin or randomize propagates into the plan's wells.
 - **The well assignment is computed at the plate step, before the selection runs**
   (`decisions.md` 045). `budget.group_keys` derives the `class_r<replicate>` groups from the
   budgets alone, and `plate.assign_wells` maps them to wells — sorted, so the same plan always
@@ -331,6 +336,13 @@ Both workflows expose the same two, in the shared export step.
   346 038 px of stage travel. Grouping gives 8 movements but *lengthens* travel to 392 877 px
   because it ignores position within a well. Hilbert gives 213 295 px (62%); greedy gives
   **197 563 px (57%)** and is faster, which is why it is the default.
+- **What will not be cut is reported by cause, not by count** (`decisions.md` 048).
+  `CollectionPlan.not_selected` is shapes with no group — deliberate in the cell workflow, a
+  likely mistake in the annotations workflow, so the cell workflow states it in a caption and
+  the annotations workflow warns. `CollectionPlan.unplaced` is shapes that *do* belong to a
+  group whose group got no well, which always warrants a warning in either workflow.
+  `plan_from_class_wells` assigns a `group_key` only to classes present in the
+  samples-and-wells scheme, so both workflows classify exclusions the same way.
 - Reordering is a pure permutation: **coordinates and well assignments are untouched**,
   asserted directly on both the order array and the XML.
 - Effect on the golden cases when the default changed — cap runs collapse to the number of

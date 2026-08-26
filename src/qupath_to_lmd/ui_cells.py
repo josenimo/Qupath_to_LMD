@@ -392,13 +392,6 @@ def _export_selection(result, settings: dict, params: selection.SelectionParams,
         },
     )
 
-    unplaced = sorted(set(plan.shapes.loc[plan.shapes["group_key"].notna(), "group_key"]) - set(samples_and_wells))
-    if unplaced:
-        st.error(
-            f"{len(unplaced)} group(s) have no well on this plate and will not be cut: "
-            f"{', '.join(unplaced[:8])}. Reduce replicates or use a larger plate."
-        )
-
     st.session_state.saw = samples_and_wells
 
     ui_shared.export_step(settings, lambda _settings: plan, step="9")
