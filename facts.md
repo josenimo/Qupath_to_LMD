@@ -321,6 +321,13 @@ Not scope creep — recorded so nobody rediscovers them, and so a fix is a delib
 
 Still open:
 
+- `demo_Qupath_project/Exemplar001.ome.tif - Image0.geojson` is Jose's real QuPath 0.7.0
+  export, untracked (83.7 MB). It was re-exported on 2026-08-26 to add three named
+  calibration points and measurements, so it now exercises the whole cell workflow. Its true
+  scale, implied by `Cell: Area` over all 8537 classified cells, is **0.6535 µm/px** with
+  0.66% spread — which is 6.5 µm ÷ 10×, a row of the reference table. Read time 1.4 s,
+  triangle QC 0.01 s, statistics under 0.01 s. Do not assume the 0.3467 µm/px of
+  `Single_cells.geojson` applies to it.
 - **Nothing in the app requires QuPath `measurements`.** Areas are computed from the shape
   geometry and the user's µm/px, so a plain export without measurements is fully supported —
   which matters because QuPath only includes them if the user ticks the option, and a real

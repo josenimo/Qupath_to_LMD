@@ -207,19 +207,21 @@ def calibration_step(step: str = "3"):
 def pixel_size_step(step: str = "4") -> float | None:
     """Ask for µm per pixel and cross-check it against QuPath's own area measurements.
 
-    Required before any area figure is shown (`decisions.md` 011). The entered value is
-    never overwritten by the implied one — a mismatch is reported and the user decides.
+    Optional (`decisions.md` 038): without it, only shape counts and cell-count budgets are
+    available. Required before any *area* figure is shown (`decisions.md` 011). The entered
+    value is never overwritten by the implied one — a mismatch is reported and the user decides.
     """
     if st.session_state.gdf is None:
         return None
 
-    st.markdown(f"## Step {step}: Image scale")
+    st.markdown(f"## Step {step} (optional): Image scale")
     st.markdown(
         "How many micrometres does one pixel of your image cover? QuPath shows this in "
-        "*Image → Image properties → Pixel width*. Every area below is computed from it, so "
-        "a wrong value gives you a correct-looking collection of the wrong amount of tissue. "
-        "This is the only thing the app needs it for — areas are measured from the shapes "
-        "themselves, not from QuPath measurements."
+        "*Image → Image properties → Pixel width*.\n\n"
+        "**Only needed if you want to work in areas.** If you intend to collect a number of "
+        "cells, skip this. Every area figure in the app is computed from this number, so a "
+        "wrong value gives you a correct-looking collection of the wrong amount of tissue — "
+        "which is why it is better left blank than guessed."
     )
 
     # Three things matter for this input to behave:
@@ -261,7 +263,10 @@ def pixel_size_step(step: str = "4") -> float | None:
         )
 
     if entered is None:
-        st.info("Enter the pixel size to continue.")
+        st.caption(
+            "Left blank. You can still collect by number of cells; areas and area budgets "
+            "stay unavailable until a scale is entered."
+        )
         return None
 
     report = qc.pixel_size_qc(st.session_state.gdf, entered)
