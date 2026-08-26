@@ -514,6 +514,8 @@ def export_step(settings: dict, build_plan, step: str = "6") -> None:
                 Please download the QC image, and plate scheme for future reference.
                 """)
 
+    tolerance, path_order = _export_parameters(step)
+
     if st.button("Process files"):
         logger.info("Process files button clicked")
         if st.session_state.gdf is None:
@@ -523,7 +525,7 @@ def export_step(settings: dict, build_plan, step: str = "6") -> None:
         elif st.session_state.calib_array is None:
             st.warning("Please select three calibration points first.")
         else:
-            _process(settings, build_plan)
+            _process(settings, build_plan, tolerance, path_order)
 
     if st.session_state.zip_buffer:
         st.download_button(
@@ -534,20 +536,73 @@ def export_step(settings: dict, build_plan, step: str = "6") -> None:
         )
 
 
-def _process(settings: dict, build_plan) -> None:
+PATH_ORDER_LABELS = {
+    export.PathOrder.GREEDY: "Shortest path within each well — nearest-neighbour (recommended)",
+    export.PathOrder.HILBERT: "Shortest path within each well — space-filling curve",
+    export.PathOrder.GROUPED: "Group each well together, no path shortening",
+    export.PathOrder.NONE: "As loaded — no reordering (what this app did before)",
+}
+
+
+def _export_parameters(step: str) -> tuple[float, export.PathOrder]:
+    """Simplification tolerance and cut order. Both default to today's behaviour."""
+    tolerance_column, order_column = st.columns([1, 2])
+
+    with tolerance_column:
+        tolerance = st.number_input(
+            "Smoothing tolerance (pixels)",
+            min_value=0.0,
+            max_value=100.0,
+            value=export.DEFAULT_SIMPLIFY_TOLERANCE,
+            step=0.5,
+            key=f"simplify_tolerance_{step}",
+            help=(
+                "How far an outline may move when spare points are removed from it. Higher "
+                "values mean fewer points, so the stage traces the shape faster, but the cut "
+                "follows your annotation less exactly. Lower values follow it more closely at "
+                "the cost of a slower cut. The default of 1 pixel is what this app has always "
+                "used."
+            ),
+        )
+
+    with order_column:
+        path_order = st.selectbox(
+            "Cutting order",
+            options=list(PATH_ORDER_LABELS),
+            format_func=lambda mode: PATH_ORDER_LABELS[mode],
+            key=f"path_order_{step}",
+            help=(
+                "The order shapes are written in is the order the LMD cuts them, and stage "
+                "movement between shapes is a leading cause of cutting misalignment. Grouping "
+                "a well's shapes together means the collector moves once per well instead of "
+                "once per shape; shortening the path within each well cuts how far the stage "
+                "travels between cuts. None of this changes which tissue lands in which well. "
+                "The first collection of a session may take an extra few seconds while the "
+                "nearest-neighbour solver compiles."
+            ),
+        )
+
+    return float(tolerance), path_order
+
+
+def _process(settings: dict, build_plan, tolerance: float, path_order) -> None:
     """Build the plan, render it, and stash the bundle for download."""
     plate_type = settings["plate_type"]
     plan = build_plan(settings)
+    plan.params.update(
+        {"simplify_tolerance_px": tolerance, "path_order": path_order.value}
+    )
 
-    skipped = plan.skipped
-    if not skipped.empty:
-        st.warning(
-            f"{len(skipped)} of {len(plan.shapes)} shapes have no well and will not be cut. "
-            f"Their classes: {', '.join(sorted(set(skipped[CLASS_NAME]))[:10])}"
-        )
+    _report_excluded(plan)
 
     try:
-        result = export.build_collection(plan, samples_and_wells=st.session_state.saw, plate=plate_type)
+        result = export.build_collection(
+            plan,
+            samples_and_wells=st.session_state.saw,
+            simplify_tolerance=tolerance,
+            plate=plate_type,
+            path_order=path_order,
+        )
     except ValueError as error:
         st.error(str(error))
         logger.error(str(error))
@@ -567,9 +622,63 @@ def _process(settings: dict, build_plan) -> None:
         f"Collection: {result.n_shapes} shapes, {result.n_vertices} vertices, "
         f"{len(plan.wells_used)} wells used."
     )
+    _report_path(result, plan.pixel_size_um)
     st.image(result.image_path, caption="Your Contours", width="content")
     st.success("All files have been processed and are ready for download.")
     logger.success("All files processed and zipped successfully")
+
+
+def _report_excluded(plan) -> None:
+    """Say what will not be cut, distinguishing a mistake from the intended outcome.
+
+    In the cell workflow most shapes are deliberately not selected, so warning about them
+    would cry wolf on every single collection. What genuinely warrants a warning is a shape
+    the user asked to collect whose group ran out of wells.
+    """
+    unplaced = plan.unplaced
+    if not unplaced.empty:
+        groups = sorted(set(unplaced["group_key"]))
+        st.warning(
+            f"{len(unplaced)} shapes you asked to collect will **not** be cut, because their "
+            f"group got no well on this plate: {', '.join(groups[:8])}"
+            f"{' ...' if len(groups) > 8 else ''}. Reduce the replicates, lower the margin or "
+            "spacing, or use a larger plate."
+        )
+
+    not_selected = plan.not_selected
+    if not_selected.empty:
+        return
+
+    if plan.workflow == "cells":
+        st.caption(
+            f"{len(not_selected):,} of {len(plan.shapes):,} shapes are not part of this "
+            "collection, as intended — you asked for a subset."
+        )
+    else:
+        st.warning(
+            f"{len(not_selected)} of {len(plan.shapes)} shapes have no well and will not be "
+            f"cut. Their classes: {', '.join(sorted(set(not_selected[CLASS_NAME]))[:10])}"
+        )
+
+
+def _report_path(result, pixel_size_um: float | None) -> None:
+    """Show what the cutting order costs in stage travel and collector movements."""
+    def as_distance(pixels: float) -> str:
+        if pixel_size_um:
+            return f"{pixels * pixel_size_um / 1000:,.1f} mm"
+        return f"{pixels:,.0f} px"
+
+    line = (
+        f"Cut path: **{as_distance(result.path_length_px)}** of stage travel, "
+        f"**{result.collector_moves}** collector movements."
+    )
+    saved = result.baseline_path_length_px - result.path_length_px
+    if saved > 0 or result.baseline_collector_moves > result.collector_moves:
+        line += (
+            f" Without reordering it would be {as_distance(result.baseline_path_length_px)} and "
+            f"{result.baseline_collector_moves} movements."
+        )
+    st.write(line)
 
 
 def extras_step() -> None:

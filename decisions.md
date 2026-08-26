@@ -729,3 +729,95 @@ confirm gate.
 unseeded-randomize gap that had been recorded as a known quirk. `plan_from_selection` now
 accepts the assignment already shown to the user, so a replicate that ends up with no shapes
 keeps its well rather than quietly disappearing from the plate.
+
+## 046 — Phase 5 delivered: smoothing tolerance and cutting order
+**Date:** 2026-08-26 · **Status:** active
+**Decision:** The shared export step exposes two parameters for both workflows: the
+simplification tolerance in pixels (default 1.0, as 019 settled) and the cutting order
+(`none` / `grouped` / `hilbert`, default `none`). Defaults reproduce today's output exactly,
+which the golden files verify.
+**Why:** `ROADMAP.md` Phase 5. Both parameters were previously hard-coded, and the order one
+turned out to matter more than expected — see below.
+**What the investigation found:** writing shapes in load order makes the LMD move its
+collector **759 times for 900 shapes across 9 wells**, where 8 movements would do; the XML had
+760 contiguous cap runs against a possible 9. That is a real instrument cost that has always
+been there. Grouping by well fixes the movements but slightly lengthens stage travel
+(392 877 px vs 346 038 px) because it ignores position within a well; hilbert fixes both,
+reaching 213 295 px — 62% of unordered — with 8 movements.
+**Why the default is still `none`:** the legacy workflow is frozen, and reordering changes
+every existing user's XML. The improvement is offered, explained, and reported with
+before-and-after numbers so the choice is informed — which is 003 applied to a performance
+question rather than a safety one. If Jose would rather make grouping the default, that is a
+one-line change plus a golden re-bless.
+**Why hilbert and not greedy:** py-lmd's `tsp_greedy_solve` lazily imports `umap`
+(`lmd/segmentation.py:120`) and umap-learn is not a py-lmd dependency, so it raises
+`ModuleNotFoundError`. Adding umap-learn would pull numba and scikit-learn onto a free-tier
+deployment for a solver that loses to hilbert on this data. Hilbert order 7 is used, per
+py-lmd's own guidance for whole-slide areas; it is not exposed, because it is a knob whose
+meaning is hard to convey and 7 was best at every size measured.
+**Verified:** 18 checks — every mode is a permutation of all shapes, grouping yields exactly
+one movement per well, hilbert beats both, reordering never moves a shape to a different well,
+the XML holds the same shapes in a different order, tolerance trades vertices as expected, and
+both parameters reach `provenance.json`.
+
+## 047 — The cutting order defaults to the best option, and greedy is offered
+**Date:** 2026-08-26 · **Status:** active · **supersedes the default chosen in 046**
+**Decision:** Jose's call, on the grounds that stage movement between shapes is a leading
+cause of cutting misalignment. Two changes:
+1. The default cutting order is **`GREEDY`** — grouped by well with the path shortened inside
+   each well — not `NONE`. Best available, not historical.
+2. `umap-learn` is added as a dependency so py-lmd's `tsp_greedy_solve` can be offered at all.
+**Why greedy over hilbert:** measured on 900 real shapes across 9 wells, greedy gives
+197 563 px of stage travel against hilbert's 213 295 px and an unordered 346 038 px — 57% vs
+62% — and is faster (0.41 s vs 0.69 s per collection). Both collapse collector movements from
+759 to 8.
+**Why the dependency is acceptable:** it adds umap-learn, pynndescent, scikit-learn, joblib and
+threadpoolctl; numba, the heaviest transitive piece, was already required by py-lmd. While
+regenerating `requirements.txt` it became clear `pytest` was duplicated into the runtime
+dependencies as well as the dev group, so it was removed from runtime — the deployed footprint
+therefore grows by five packages and shrinks by three.
+**Consequence, stated plainly:** this changes the XML for every existing user. Verified across
+all four golden cases that the **coordinate multiset and the well assignment of every shape are
+unchanged** — only the order differs, and the contiguous cap runs collapse to exactly the
+number of distinct wells. Goldens re-blessed on that evidence (`CLAUDE.md` rule 6).
+**Known limit:** with roughly one shape per well — the exploded single-cell case — travel is
+dominated by the order wells are visited in, and `cells_exploded` gets 1% *longer*
+(30 755→31 066 px) while its collector movements still drop 126→123. Wells are visited in plate
+order because that minimises collector travel, which is the movement that matters there.
+Optimising the well visiting order against tissue positions would trade collector travel for
+stage travel; not attempted.
+**Also:** greedy's first call in a process costs ~14.7 s of numba compilation, then 0.1–0.6 s.
+It only runs on a button press and the help text says so.
+
+## 048 — Exclusions are reported by cause, not by count
+**Date:** 2026-08-26 · **Status:** active
+**Decision:** `CollectionPlan` gains two properties that split what `skipped` used to conflate.
+`not_selected` is shapes with no group at all; `unplaced` is shapes that belong to a group whose
+group got no well. The cell workflow states `not_selected` in a caption and the annotations
+workflow warns about it; `unplaced` warns in both. `plan_from_class_wells` now assigns a
+`group_key` only to classes present in the samples-and-wells scheme, so the two workflows
+classify exclusions identically.
+**Why:** Jose hit "6988 of 8537 shapes have no well and will not be cut" on a normal cell
+collection. In the annotations workflow that message means a class is missing from the scheme,
+which is worth a warning. In the cell workflow it means the shapes were not selected — which is
+the entire purpose of the workflow, so the warning fired on every single collection. Warning
+about the intended outcome is how a warning stops being read, and this app's warnings are its
+safety mechanism (003).
+**What genuinely warrants a warning in the cell workflow** is a shape the user *asked* to
+collect that will not be cut anyway because its group ran out of wells. That is now the
+`unplaced` case, and it replaced a duplicate check that lived in `ui_cells`.
+**Verified:** no change to the export — goldens identical — and 9 checks covering both
+classifications in both workflows.
+
+## 049 — The cell workflow needs no plate confirmation
+**Date:** 2026-08-26 · **Status:** active · records what 045 left implicit
+**Decision:** Confirmed by testing rather than changed. The cell workflow has no Confirm step
+because the well assignment is recomputed from the current plate settings on every rerun; a
+change to plate type, margin, spacing or the randomize toggle takes effect immediately, and the
+plate table directly under the options always shows what will actually be used.
+**Why recorded:** Jose asked whether a plate change he made had been tracked, which means the
+absence of a confirmation step reads as an absence of feedback. The behaviour is correct — the
+same settings re-derive the same assignment, and a changed setting propagates into the plan's
+wells, both now asserted — so the answer is that the plate table *is* the confirmation. If it
+still reads as ambiguous, the fix is a clearer statement next to the table rather than a
+Confirm button, which would only add a step that can be forgotten.

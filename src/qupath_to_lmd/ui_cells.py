@@ -10,7 +10,7 @@ import pandas
 import streamlit as st
 from loguru import logger
 
-from qupath_to_lmd import budget, export, plate, plot, selection, stats, ui_shared
+from qupath_to_lmd import budget, plate, plot, selection, stats, ui_shared
 from qupath_to_lmd.model import CLASS_NAME, plan_from_selection
 
 
@@ -378,7 +378,6 @@ def _export_selection(result, settings: dict, params: selection.SelectionParams,
         session_id=st.session_state.session_id,
         pixel_size_um=pixel_size_um,
         params={
-            "simplify_tolerance_px": export.DEFAULT_SIMPLIFY_TOLERANCE,
             "plate": settings["plate_type"],
             "margins": settings["margins"],
             "step_row": settings["step_row"],
@@ -392,13 +391,6 @@ def _export_selection(result, settings: dict, params: selection.SelectionParams,
             "budgets": st.session_state.budgets,
         },
     )
-
-    unplaced = sorted(set(plan.shapes.loc[plan.shapes["group_key"].notna(), "group_key"]) - set(samples_and_wells))
-    if unplaced:
-        st.error(
-            f"{len(unplaced)} group(s) have no well on this plate and will not be cut: "
-            f"{', '.join(unplaced[:8])}. Reduce replicates or use a larger plate."
-        )
 
     st.session_state.saw = samples_and_wells
 

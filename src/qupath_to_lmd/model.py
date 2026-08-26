@@ -53,6 +53,25 @@ class CollectionPlan:
         return self.shapes[self.shapes[WELL].isna()]
 
     @property
+    def unplaced(self) -> geopandas.GeoDataFrame:
+        """Shapes that belong to a group but whose group got no well.
+
+        Distinct from `skipped`: in the cell workflow most shapes are simply not selected,
+        which is the point of the workflow. These are shapes the user *asked* to collect and
+        that will not be cut anyway, because their group ran out of wells.
+        """
+        if GROUP_KEY not in self.shapes.columns:
+            return self.shapes.iloc[:0]
+        return self.shapes[self.shapes[GROUP_KEY].notna() & self.shapes[WELL].isna()]
+
+    @property
+    def not_selected(self) -> geopandas.GeoDataFrame:
+        """Shapes deliberately left out — no group was ever assigned to them."""
+        if GROUP_KEY not in self.shapes.columns:
+            return self.shapes.iloc[:0]
+        return self.shapes[self.shapes[GROUP_KEY].isna()]
+
+    @property
     def wells_used(self) -> list[str]:
         """Wells that will receive tissue, sorted."""
         return sorted(set(self.selected[WELL]))
@@ -95,7 +114,11 @@ def plan_from_class_wells(
     shapes = gdf.copy()
     shapes[SHAPE_ID] = shapes["id"] if "id" in shapes.columns else shapes.index.astype(str)
     shapes[REPLICATE] = None
-    shapes[GROUP_KEY] = shapes[CLASS_NAME]
+    # Only classes the user put in the scheme get a group. A class they left out was not asked
+    # for, which is the same state as an unselected shape in the cell workflow, so both are
+    # reported the same way.
+    in_scheme = shapes[CLASS_NAME].isin(samples_and_wells)
+    shapes[GROUP_KEY] = shapes[CLASS_NAME].where(in_scheme)
     shapes[WELL] = shapes[GROUP_KEY].map(samples_and_wells)
 
     return CollectionPlan(

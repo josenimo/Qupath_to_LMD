@@ -7,7 +7,7 @@ harness (`tools/golden_harness.py`) is what enforces that.
 import streamlit as st
 from loguru import logger
 
-from qupath_to_lmd import export, geojson, ui_shared
+from qupath_to_lmd import geojson, ui_shared
 from qupath_to_lmd.model import CLASS_NAME, plan_from_class_wells
 
 
@@ -47,7 +47,6 @@ def _build_plan(settings: dict):
         source_file=st.session_state.file_name,
         session_id=st.session_state.session_id,
         params={
-            "simplify_tolerance_px": export.DEFAULT_SIMPLIFY_TOLERANCE,
             "plate": settings["plate_type"],
             "margins": settings["margins"],
             "step_row": settings["step_row"],
