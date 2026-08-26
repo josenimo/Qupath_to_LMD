@@ -3,6 +3,9 @@
 Living record of what is true about this app. Corrected in place when it goes stale — not
 append-only (that is `decisions.md`). Last verified: 2026-08-26.
 
+Planned restructuring into two workflows: `ROADMAP.md`. Everything below describes the app
+**as it is today**, before that work.
+
 ---
 
 ## What the app is for
@@ -36,8 +39,8 @@ src/qupath_to_lmd/
   mock_streamlit.py               patch_streamlit() — stubs st.* so core/utils run headless
   __init__.py                     empty
 demo_Qupath_project/              real QuPath project used as test fixture
-  TD_01_verysmall_mIF.geojson     9 features: annotations + calibration points
-  Single_cells.geojson            many small shapes, single-cell path
+  TD_01_verysmall_mIF.geojson     9 features: 6 annotation Polygons + 3 calibration Points
+  Single_cells.geojson            131 features: 121 cells + 7 annotations + 3 Points
   demo_samples_and_wells.txt      python-dict-literal saw file for the upload path
   QuPath_scripts/*.groovy         detections_to_annotations, select_random_detections
 assets/                           screenshots, example classes.json
@@ -45,6 +48,41 @@ assets/                           screenshots, example classes.json
 
 Key dependency: **`py-lmd`** (`lmd.lib.Collection`) does the actual coordinate transform
 and XML writing. Also geopandas/shapely for geometry, loguru for logging.
+
+## What QuPath actually puts in the GeoJSON
+
+Verified against both demo files.
+
+- `id` — uuid string, stable per object. `objectType` — `"annotation"`, `"cell"`, or
+  `"detection"`. **`objectType` is the natural discriminator between the two planned
+  workflows**, and a single file can legitimately mix them (`Single_cells.geojson` has both).
+- `classification` — arrives as a **JSON string** (`'{ "name": ..., "color": [r,g,b] }'`),
+  not a dict, hence the `ast.literal_eval` on it. `None` for unclassified objects.
+- `name` — set on calibration Points, `None` on annotations and cells.
+- `isLocked` — present on annotations, NaN elsewhere.
+- `measurements` — **only on cells/detections**, a JSON string with QuPath's per-object
+  measurements. `Single_cells.geojson` carries **126 fields** per cell:
+  `Cell: Area`, `Perimeter`, `Circularity`, `Max/Min caliper`, `Eccentricity`, and
+  mean/std/max/min per marker channel (DAPI, Vimentin, CD3e, panCK, CD8, Ki67, COL1A1,
+  CD20, CD68, and the `_bg` channels). This is the raw material for the planned per-class
+  statistics and for measurement-ranked selection.
+- **Coordinates are in image pixels**, but `Cell: Area` is in **µm²**. So the scale is
+  recoverable: `sqrt(Cell:Area / polygon_area_px)` gives 0.3467 µm/px across all 121 cells
+  of `Single_cells.geojson` with 0.2% spread. Used as a cross-check on the user's µm/px
+  input, not to auto-fill it (`decisions.md` 011).
+
+## py-lmd surface we use
+
+- `Collection(calibration_points)` → `new_shape(points, well, name)` → `save(path)`;
+  also `plot(save_name=...)` and `stats()`.
+- `Collection` does **no** cut-path optimization. `lmd.lib` does export
+  `tsp_greedy_solve(node_list, k=100, return_sorted=False)` (returns indices) and
+  `tsp_hilbert_solve(data, p=3)`, but only the mask-based `SegmentationLoader` calls them.
+  To order shapes we must call the solvers ourselves before `new_shape`.
+- `SegmentationLoader`'s config is the field's vocabulary for shape processing —
+  `shape_dilation`, `shape_erosion`, `binary_smoothing`, `convolution_smoothing`,
+  `poly_compression_factor`, `path_optimization`, `hilbert_p`. It operates on label masks,
+  so none of it applies to this app's vector path; shapely equivalents are ours to write.
 
 ## The pipeline, step by step
 
@@ -137,6 +175,11 @@ Initialised in the block at the top of `streamlit_app.py`. Any new key belongs h
 
 Not scope creep — recorded so nobody rediscovers them, and so a fix is a deliberate choice.
 
+- **`geopandas.read_file` tags QuPath GeoJSON as `EPSG:4326`.** The coordinates are image
+  pixels, so the CRS is meaningless: every `.area` / `.distance` / `.centroid` call runs
+  against a geographic projection and emits "Geometry is in a geographic CRS. Results from
+  'area' are likely incorrect". Harmless today because nothing measures area; blocking for
+  anything area- or distance-based. Fix is `crs = None` on read (`ROADMAP.md` Phase 0).
 - `core.load_and_QC_SamplesandWells` validates wells against a **hard-coded 384** grid
   (`utils.py:141`), so a well like `H20` passes even when the user picked a 96-well plate.
 - The plate CSV in the zip is always named `<stem>_384_wellplate.csv`
