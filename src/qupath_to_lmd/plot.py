@@ -8,6 +8,7 @@ figure in a global registry and Streamlit reruns would leak them.
 
 import geopandas
 import numpy
+import pandas
 from loguru import logger
 from matplotlib.collections import PolyCollection
 from matplotlib.figure import Figure
@@ -32,17 +33,23 @@ def class_colors(classes: list[str]) -> dict[str, str]:
 
 def plot_shapes(
     gdf: geopandas.GeoDataFrame,
+    labels: pandas.Series | None = None,
     included: list[str] | None = None,
     calibration_array: numpy.ndarray | None = None,
     title: str | None = None,
     figsize: tuple[float, float] = (10.0, 7.5),
 ) -> Figure:
-    """Draw shapes coloured by class.
+    """Draw shapes coloured by a label, with everything else grey.
+
+    One function for the class overview, the selection preview and the export QC image
+    (`decisions.md` 017): the caller decides what the label means.
 
     Args:
-        gdf: shapes carrying `classification_name`.
-        included: classes to colour. Anything else is drawn grey, so a user can see what
-            they are leaving out rather than only what they are taking.
+        gdf: the shapes.
+        labels: label per shape index. Defaults to `classification_name`. Shapes whose label
+            is NA are always drawn grey — that is how unselected shapes appear.
+        included: labels to colour. Anything else is drawn grey, so a user can see what they
+            are leaving out rather than only what they are taking.
         calibration_array: 3x2 array; drawn as a dashed triangle if given.
         title: optional heading.
         figsize: inches.
@@ -50,15 +57,23 @@ def plot_shapes(
     figure = Figure(figsize=figsize, layout="constrained")
     axes = figure.add_subplot()
 
-    classes = sorted(gdf[CLASS_NAME].dropna().unique())
+    if labels is None:
+        labels = gdf[CLASS_NAME]
+    labels = labels.reindex(gdf.index)
+
+    classes = sorted(labels.dropna().unique())
     included = classes if included is None else included
     colors = class_colors(classes)
     as_dots = len(gdf) > POLYGON_LIMIT
     logger.info(f"Plotting {len(gdf)} shapes as {'centroids' if as_dots else 'polygons'}")
 
-    # Excluded first, so included classes are drawn over them.
+    unlabelled = gdf[labels.isna()]
+    if not unlabelled.empty:
+        _draw(axes, unlabelled, MUTED, as_dots, False)
+
+    # Excluded first, so included labels are drawn over them.
     for class_name in sorted(classes, key=lambda name: name in included):
-        subset = gdf[gdf[CLASS_NAME] == class_name]
+        subset = gdf[labels == class_name]
         if subset.empty:
             continue
         is_in = class_name in included
@@ -76,10 +91,15 @@ def plot_shapes(
         Line2D([], [], marker="o", linestyle="", markersize=7,
                markerfacecolor=colors[name] if name in included else MUTED,
                markeredgecolor="none",
-               label=f"{name} ({int((gdf[CLASS_NAME] == name).sum())})"
+               label=f"{name} ({int((labels == name).sum())})"
                      + ("" if name in included else " — excluded"))
         for name in classes
     ]
+    if not unlabelled.empty:
+        handles.append(
+            Line2D([], [], marker="o", linestyle="", markersize=7, markerfacecolor=MUTED,
+                   markeredgecolor="none", label=f"not selected ({len(unlabelled)})")
+        )
     if handles:
         # Placed outside the axes: a legend inside covers tissue, and tissue is the point.
         # "outside ..." locations need constrained layout, which the figure above uses.

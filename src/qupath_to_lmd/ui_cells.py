@@ -10,7 +10,8 @@ import pandas
 import streamlit as st
 from loguru import logger
 
-from qupath_to_lmd import budget, plot, stats, ui_shared
+from qupath_to_lmd import budget, export, plot, selection, stats, ui_shared
+from qupath_to_lmd.model import CLASS_NAME, plan_from_selection
 
 
 def class_selection_step(pixel_size_um: float | None, step: str = "5") -> list[str]:
@@ -209,6 +210,151 @@ def capacity_step(budgets: list[budget.ClassBudget], step: str = "7") -> dict:
     return settings
 
 
+def _selection_params(step: str) -> selection.SelectionParams:
+    """Mode, the adjacency constraint, and the seed that makes a selection reproducible."""
+    mode_column, adjacency_column, seed_column = st.columns([3, 3, 2])
+
+    with mode_column:
+        mode = st.radio(
+            "How to choose shapes within a class",
+            options=list(selection.SelectionMode),
+            format_func=lambda m: {
+                selection.SelectionMode.SPREAD: "Spread out across the tissue (recommended)",
+                selection.SelectionMode.RANDOM: "Random",
+            }[m],
+            key=f"selection_mode_{step}",
+            help=(
+                "Spread lays a grid over each class and takes the shape nearest each grid "
+                "square, so a replicate samples the whole class rather than one corner of it. "
+                "Random draws without regard to position, which is unbiased but clumps."
+            ),
+        )
+
+    with adjacency_column:
+        allow_adjacent = st.checkbox(
+            "Allow touching shapes to be collected",
+            value=True,
+            key=f"allow_adjacent_{step}",
+            help=(
+                "When unticked, no two collected shapes may touch or overlap, judged on the "
+                "original QuPath outlines. Neighbouring cells share a boundary, so cutting "
+                "both risks collecting parts of each into the wrong well."
+            ),
+        )
+
+    with seed_column:
+        seed = st.number_input(
+            "Seed", min_value=0, max_value=10_000, value=0, step=1, key=f"seed_{step}",
+            help="Same seed, same selection. Recorded in provenance.json so you can report it.",
+        )
+
+    return selection.SelectionParams(mode=mode, allow_adjacent=allow_adjacent, seed=int(seed))
+
+
+def selection_step(budgets, settings: dict, pixel_size_um: float | None, step: str = "8") -> None:
+    """Choose the shapes, preview them, and offer the export."""
+    st.markdown(f"## Step {step}: Select shapes and export")
+    params = _selection_params(step)
+
+    mode = budget.BudgetMode(st.session_state.budget_mode or budget.BudgetMode.CELLS.value)
+    try:
+        with st.spinner("Choosing shapes..."):
+            result = selection.select(
+                st.session_state.gdf, budgets, mode, params, pixel_size_um=pixel_size_um
+            )
+    except ValueError as error:
+        st.error(str(error))
+        return
+
+    if result.n_selected == 0:
+        st.warning("Nothing was selected. Check the amounts in step 6.")
+        return
+
+    _report_selection(result, mode)
+    _preview_selection(result)
+    _export_selection(result, settings, params, pixel_size_um)
+
+
+def _report_selection(result: selection.SelectionResult, mode: budget.BudgetMode) -> None:
+    """Achieved against requested, per replicate."""
+    st.write(f"**{result.n_selected:,} shapes** selected across {len(result.achieved)} replicates.")
+    st.dataframe(result.achieved.round(stats.DECIMALS), width="stretch")
+
+    short = result.shortfalls
+    if not short.empty:
+        lines = "\n".join(
+            f"- **{row[CLASS_NAME]} replicate {int(row['replicate'])}**: got "
+            f"{row['achieved']:,.{stats.DECIMALS}f} of {row['requested']:,.{stats.DECIMALS}f} {mode.unit}"
+            for _, row in short.iterrows()
+        )
+        st.warning(
+            f"{len(short)} replicate(s) could not be filled completely:\n\n{lines}\n\n"
+            "They will still be collected, just with less material than you asked for."
+        )
+    if result.n_blocked_by_adjacency:
+        st.caption(
+            f"{result.n_blocked_by_adjacency} candidate shapes were skipped because they touch "
+            "a shape already being collected."
+        )
+
+
+def _preview_selection(result: selection.SelectionResult) -> None:
+    """Draw what will be cut, coloured by replicate."""
+    labels = result.replicate_of.map(lambda value: f"replicate {int(value)}" if pandas.notna(value) else None)
+    with st.spinner("Drawing the selection..."):
+        figure = plot.plot_shapes(
+            st.session_state.gdf,
+            labels=labels,
+            calibration_array=st.session_state.calib_array,
+            title="What will be cut, coloured by replicate",
+        )
+    st.pyplot(figure, width="content")
+    st.caption(
+        "Classes are merged here so you can judge whether the replicates are spread and "
+        "comparable. Replicates drawn from the same grid square sit next to each other by "
+        "design — untick *allow touching shapes* above if that is a problem for cutting."
+    )
+
+
+def _export_selection(result, settings: dict, params: selection.SelectionParams, pixel_size_um) -> None:
+    """Assign wells, build the plan, and hand off to the shared export step."""
+    plan, samples_and_wells = plan_from_selection(
+        gdf=st.session_state.gdf,
+        replicate_of=result.replicate_of,
+        wells=settings["wells"],
+        calibration_names=st.session_state.calibs,
+        calibration_array=st.session_state.calib_array,
+        source_file=st.session_state.file_name,
+        session_id=st.session_state.session_id,
+        pixel_size_um=pixel_size_um,
+        params={
+            "simplify_tolerance_px": export.DEFAULT_SIMPLIFY_TOLERANCE,
+            "plate": settings["plate_type"],
+            "margins": settings["margins"],
+            "step_row": settings["step_row"],
+            "step_col": settings["step_col"],
+            "selection_mode": params.mode.value,
+            "allow_adjacent": params.allow_adjacent,
+            "seed": params.seed,
+            "budget_mode": st.session_state.budget_mode,
+            "budgets": st.session_state.budgets,
+        },
+    )
+
+    unplaced = sorted(set(plan.shapes.loc[plan.shapes["group_key"].notna(), "group_key"]) - set(samples_and_wells))
+    if unplaced:
+        st.error(
+            f"{len(unplaced)} group(s) have no well on this plate and will not be cut: "
+            f"{', '.join(unplaced[:8])}. Reduce replicates or use a larger plate."
+        )
+
+    st.session_state.saw = samples_and_wells
+    with st.expander(f"Well assignment ({len(samples_and_wells)} wells)", expanded=False):
+        st.write(samples_and_wells)
+
+    ui_shared.export_step(settings, lambda _settings: plan, step="9")
+
+
 def render(uploaded_file) -> None:
     """The cell workflow as far as Phase 3 takes it."""
     pixel_size = ui_shared.pixel_size_step(step="4")
@@ -227,16 +373,7 @@ def render(uploaded_file) -> None:
     budgets = budgets_step(selected, pixel_size, step="6")
     st.divider()
 
-    capacity_step(budgets, step="7")
+    settings = capacity_step(budgets, step="7")
     st.divider()
 
-    st.markdown("## Step 8: Select and export")
-    st.info(
-        "**Not built yet.** Coming next (see `ROADMAP.md`):\n\n"
-        "- **Phase 4** — the selection itself: which cells fill each replicate, spatially "
-        "spread by default, with an optional no-touching-cells constraint and a preview of "
-        "exactly what will be cut\n"
-        "- **Phase 5** — smoothing and cut-path options at export\n\n"
-        "Until then, the annotations workflow can collect these shapes one class per well, "
-        "including splitting a class into one well per cell."
-    )
+    selection_step(budgets, settings, pixel_size, step="8")

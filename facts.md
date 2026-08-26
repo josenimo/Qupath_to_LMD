@@ -47,6 +47,7 @@ src/qupath_to_lmd/
   qc.py                           triangle_qc, validate_saw, pixel_size_qc (report objects)
   stats.py                        class_statistics, for_display, reference_pixel_sizes
   budget.py                       BudgetMode, ClassBudget, feasibility, total_groups
+  selection.py                    SelectionMode, SelectionParams, select, grid_bins
   plot.py                         plot_shapes — class overview, selection preview, QC image
   export.py                       build_collection, build_bundle, ORIENTATION_TRANSFORM
   extras.py                       QuPath classes.json generation
@@ -127,7 +128,8 @@ are shared, then the router dispatches to one of two workflows.
 **Shared:** 1 upload + QC · 2 workflow choice · 3 calibration points.
 **Legacy then continues:** 4 optional class split · 5 plate layout · 6 process and download.
 **Cells then continues:** 4 image scale (optional) · 5 class statistics and selection ·
-6 replicates and budgets · 7 plate and capacity · 8 onwards not built yet.
+6 replicates and budgets · 7 plate and capacity · 8 selection with preview · 9 export.
+Both workflows now reach a downloadable collection.
 
 Step numbers are passed into the `ui_shared` step functions rather than hard-coded, because
 the two workflows reach the shared steps at different points.
@@ -249,6 +251,33 @@ categoricals × replicate count, cycling 6 hard-coded colours as Java signed int
   step 7 compares it against the usable wells of the chosen plate and warns if it exceeds them.
 - The `st.data_editor` key is an md5 of the sorted class selection plus the mode, so changing
   either gives a fresh editor instead of leaving stale rows behind.
+
+## Selection engine (Phase 4)
+
+- `selection.select(gdf, budgets, budget_mode, params, pixel_size_um)` returns a
+  `SelectionResult`: `replicate_of` (replicate number per shape index, NA for unselected),
+  an `achieved` frame per class and replicate, and `n_blocked_by_adjacency`.
+- **Spread is implemented with a regular grid, not k-means** (`decisions.md` 040). Measured on
+  4214 centroids: k-means costs 0.8 s at k=500 and **14 s at k=2000, 62 s at k=4000**, which
+  is unusable inside a Streamlit rerun; the grid is ~0.03 s at any k and separates better
+  (min pairwise gap 118 px vs 82 at k=100). `grid_bins` binary-searches the cell size until
+  the occupied-cell count lands near the target.
+- **Replicates are interleaved by construction**: bins are ordered nearest-to-centre and
+  replicate *i* takes the *i*-th member of each bin. Verified on real data — replicate
+  centroids of one class agree to 3.3% of the class extent, so they are statistical repeats,
+  not spatial partitions (`decisions.md` 015).
+- **Filling is round-robin across bins** until the budget is met, which serves both modes with
+  one loop: a count budget completes in one pass, an area budget keeps circling until the
+  target is reached. Area budgets land just above target, overshooting under 5%.
+- **Adjacency is global**, not per replicate — the laser cuts a shared boundary regardless of
+  which well each cell goes to. Built with `shapely.STRtree(...).query(predicate="intersects")`
+  on the original QuPath geometry (`decisions.md` 013), 0.04 s over 8537 shapes, 350 touching
+  pairs. Verified: with the constraint on, zero selected shapes touch; with it off, they do.
+- **Seed is exposed and recorded** in `provenance.json`, so a selection can be reported in a
+  methods section and reproduced.
+- `model.plan_from_selection` assigns one well per `class_r<replicate>` group, groups sorted so
+  the same selection always lands in the same wells, and returns the group-to-well mapping the
+  export path needs. Groups beyond the available wells are reported, never silently dropped.
 
 ## Session state keys
 

@@ -604,3 +604,45 @@ selection changes.
 one plan is harder to reason about than it is useful; revisit if asked. Blocking on
 infeasible budgets — 003, and a partly-filled replicate is sometimes exactly what the user
 wants.
+
+## 040 — Spread uses a regular grid, not k-means
+**Date:** 2026-08-26 · **Status:** active · **supersedes the implementation in 016**
+**Decision:** Spatial spread is implemented by binning centroids on a regular grid whose cell
+size is binary-searched so the occupied-cell count lands near the number of shapes wanted,
+then taking the shape nearest each bin centre. 016's intent — spread by default, replicates
+interleaved via bin offsets — is unchanged; k-means is replaced.
+**Why:** measured on 4214 real centroids, `scipy.cluster.vq.kmeans2` costs 0.03 s at k=100,
+0.8 s at k=500, **14 s at k=2000 and 62 s at k=4000**. Streamlit reruns the whole script on
+every widget change, so a user asking for 2000 cells per replicate would wait 14 s per
+keystroke. The grid is ~0.03 s at any k *and* separates better: min pairwise gap 118 px
+against k-means' 82 px at k=100.
+**Trade-off, measured and accepted:** the grid is more edge-biased than k-means at small k —
+mean distance from the tissue edge 328 px against k-means' 396 px, with a population mean of
+450 px. Some of that is inherent to any spatially uniform sample of an interior-dense
+population, and the honest answer for a user who wants population-proportional sampling is
+the random mode, which is offered alongside and is unbiased by construction (depth 454 px).
+Documenting both is better than pretending one mode dominates.
+**Alternatives rejected:** k-means (above). A Hilbert-curve stride — comparable spread and
+speed, but "we lay a grid over the tissue and take one shape per square" is explainable to a
+user in a sentence, and this app's warnings and choices have to be legible to be useful.
+
+## 041 — Phase 4 delivered: selection engine, preview, and a complete cell workflow
+**Date:** 2026-08-26 · **Status:** active
+**Decision:** `selection.py` chooses shapes; `model.plan_from_selection` turns the result into
+a `CollectionPlan` with one well per `class_r<replicate>` group; step 8 shows the selection
+parameters, the achieved-versus-requested table and a preview coloured by replicate, then
+hands off to the existing shared export step. The cell workflow now produces a downloadable
+collection.
+**Why:** `ROADMAP.md` Phase 4. The preview is the point (017): a user can see clumping, a
+starved replicate or edge bias immediately rather than inferring it from numbers.
+**Details worth keeping:** filling is round-robin across bins until the budget is met, which
+serves count and area budgets with one loop instead of two code paths. Adjacency is enforced
+**globally** rather than per replicate, because the laser cuts a shared boundary regardless of
+which well each cell goes to. Unselected shapes stay in the plan as `skipped` so the app can
+say what it left out. The preview colours by replicate and merges classes, since the question
+at that step is whether the replicates are spread and comparable — the class overview in step
+5 already answered the other question.
+**Verified end to end on the real 8537-shape export:** 19 checks including exact count
+budgets, zero touching pairs under the adjacency constraint with a control proving touching
+pairs occur without it, area budgets overshooting under 5%, seed determinism, and a real XML
+build of 900 shapes and 7863 vertices.
