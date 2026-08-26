@@ -142,8 +142,14 @@ the two workflows reach the shared steps at different points.
    Returns `(gdf, calibration_points, GeojsonReport)`. The report is rendered by the app,
    not by the library.
 1.1 **Calibration selection** — three `st.selectbox`es pick 3 names from the pool, order
-   matters. `qc.triangle_qc` returns a `TriangleReport` with the calibration array and the
-   fraction of Polygons/LineStrings intersecting the triangle; `is_concerning` below 25%.
+   matters. `qc.triangle_qc` returns a `TriangleReport` with the calibration array, the
+   triangle area, and the fraction of Polygons/LineStrings intersecting it;
+   `is_concerning` below 25%, `is_degenerate` when the area is 0.
+   **Two hard stops here** (`decisions.md` 031), the only blocking checks in the app besides
+   an unreadable file: fewer than three calibration points in the file, and three points that
+   do not form a triangle (a repeat, or all three collinear). Both make every downstream
+   output meaningless, and **py-lmd writes a well-formed XML for a degenerate triangle
+   without complaining** — verified — so nothing further would catch it.
 1.2 **Optional class split** — `geojson.explode_classes` turns e.g. `T-Cell` into
    `T-Cell_001…`, one name per shape, for single-cell collection. Stores
    `original_classification_name` so repeated runs stay idempotent, and rewrites the
@@ -268,6 +274,10 @@ Still open:
 - **`randomize` has no seed.** `plate.sample_layout` calls `random.sample` unseeded, so a
   randomized layout cannot be reproduced or reported in a methods section. Phase 4
   introduces seeds for the selection engine; this should join them.
+- **`py-lmd` accepts a degenerate calibration triangle silently.** Given three identical or
+  collinear calibration points it writes a normal-looking XML with no error and no NaN, so
+  the file looks fine and cuts in the wrong place. The app blocks this itself
+  (`decisions.md` 031); do not assume py-lmd validates calibration geometry.
 - **`py-lmd`'s `Collection.plot` calls `plt.show()`** (`lmd/lib.py:182`), so it blocks
   forever under a GUI matplotlib backend. A plain `python` run on macOS hangs unless
   `MPLBACKEND=Agg` is set; under Agg it merely warns "FigureCanvasAgg is non-interactive".

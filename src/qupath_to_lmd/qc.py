@@ -18,6 +18,7 @@ class TriangleReport:
     calibration_array: numpy.ndarray
     n_shapes: int = 0
     n_intersecting: int = 0
+    triangle_area: float = 0.0
 
     @property
     def fraction_inside(self) -> float:
@@ -28,6 +29,16 @@ class TriangleReport:
     def is_concerning(self) -> bool:
         """Shapes far outside the triangle get warped by the coordinate transform."""
         return self.n_shapes > 0 and self.fraction_inside < 0.25
+
+    @property
+    def is_degenerate(self) -> bool:
+        """The three points do not form a triangle, so no coordinate transform exists.
+
+        Happens when the same point is picked more than once, or when all three are
+        collinear. py-lmd does not complain — it writes a perfectly well-formed XML whose
+        coordinates are meaningless — so this has to be caught here.
+        """
+        return self.triangle_area <= 0
 
 
 @dataclass
@@ -68,7 +79,12 @@ def triangle_qc(
         calibration_array=calibration_array,
         n_shapes=len(cuttable),
         n_intersecting=int(cuttable.geometry.intersects(triangle).sum()),
+        triangle_area=float(triangle.area),
     )
+
+    if report.is_degenerate:
+        logger.error(f"Calibration points {selected_names} do not form a triangle")
+        return report
 
     logger.info(f"{report.fraction_inside * 100:.2f}% of shapes intersect the calibration triangle")
     if report.is_concerning:

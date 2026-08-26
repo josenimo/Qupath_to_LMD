@@ -144,32 +144,56 @@ def calibration_step(step: str = "3"):
 
     st.markdown(f"## Step {step}: Calibration points")
 
-    if not st.session_state.calibration_points:
-        st.warning(
-            "**No calibration points in this file, so no collection can be made from it.** "
-            "The LMD needs three reference points to map image coordinates onto the stage.\n\n"
-            "In QuPath: select the point tool, click three spots on the slide (ideally close "
-            "to the tissue you want to cut), give each point annotation a name in the "
-            "annotation list, then export again. The export must include the point "
-            "annotations as well as your cells or regions — if you exported a selection, the "
-            "points were probably left out."
+    available = st.session_state.calibration_points or {}
+    if len(available) < 3:
+        found = (
+            "This file has no calibration points."
+            if not available
+            else f"This file has only {len(available)} calibration point(s): {', '.join(available)}."
         )
-        return
+        st.error(
+            f"**{found} Three are required and there is no way to continue without them.**\n\n"
+            "The LMD needs three reference points to map image coordinates onto the stage. "
+            "Without them any cutting file would be meaningless, so processing stops here.\n\n"
+            "In QuPath: select the point tool, click three spots on the slide — ideally close "
+            "to the tissue you want to cut — give each point annotation a name in the "
+            "annotation list, then export again. The export must include the point annotations "
+            "as well as your cells or regions; if you exported a selection, the points were "
+            "probably left out."
+        )
+        logger.error(f"Stopping: {len(available)} calibration points found, 3 required")
+        st.stop()
 
-    options = list(st.session_state.calibration_points)
-    c1 = st.selectbox("Select calibration point 1", options, index=0 if len(options) > 0 else None)
-    c2 = st.selectbox("Select calibration point 2", options, index=1 if len(options) > 1 else None)
-    c3 = st.selectbox("Select calibration point 3", options, index=2 if len(options) > 2 else None)
+    options = list(available)
+    c1 = st.selectbox("Select calibration point 1", options, index=0)
+    c2 = st.selectbox("Select calibration point 2", options, index=1)
+    c3 = st.selectbox("Select calibration point 3", options, index=2)
 
     st.session_state.calibs = [c1, c2, c3]
     logger.info(f"Calibration points chosen: {st.session_state.calibs}")
 
-    if not all(st.session_state.calibs):
-        return
-
     triangle = qc.triangle_qc(
         st.session_state.gdf, st.session_state.calibration_points, st.session_state.calibs
     )
+
+    if triangle.is_degenerate:
+        repeated = len(set(st.session_state.calibs)) < 3
+        st.error(
+            "**These three calibration points do not form a triangle, so no collection can "
+            "be made from them.**\n\n"
+            + (
+                "The same point is selected more than once. Pick three different points."
+                if repeated
+                else "All three points lie on a straight line. Pick three that form a proper "
+                "triangle around your tissue."
+            )
+            + "\n\nThis has to stop here: the LMD software would accept the resulting file "
+            "without complaint and cut in the wrong place."
+        )
+        st.session_state.calib_array = None
+        logger.error(f"Stopping: degenerate calibration triangle from {st.session_state.calibs}")
+        st.stop()
+
     st.session_state.calib_array = triangle.calibration_array
     st.write(f"{triangle.fraction_inside * 100:.2f}% of shapes are inside the calibration triangle")
     if triangle.is_concerning:

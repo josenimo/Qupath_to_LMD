@@ -456,3 +456,25 @@ representation including scientific notation and cannot snap, but gives up the n
 keyboard, the arrows and range validation for a problem the matched step already solves.
 Worth revisiting if snapping is ever reported again, since it is the only option that removes
 the browser from the equation entirely.
+
+## 031 — Missing or degenerate calibration points are hard stops
+**Date:** 2026-08-26 · **Status:** active · supersedes the warning chosen in 026
+**Decision:** Jose's call. The calibration step calls `st.error` and `st.stop()` when the
+file has fewer than three calibration points. Extended to a second case found while
+implementing it: three points that do not form a triangle, because one is repeated or all
+three are collinear. `qc.TriangleReport.is_degenerate` reports it, the UI blocks on it.
+**Why:** 026 made a missing-calibration file merely warn, on the reasoning that the file is
+readable and the user could still look around. Jose overruled that, and correctly — nothing
+downstream can produce a valid collection without three points, so letting the user proceed
+only defers the failure to a worse place. This is the "continuing cannot produce a
+meaningful result" case that 003 reserves `st.stop()` for.
+The degenerate case is worse than missing points and was found by testing rather than
+assumed: **py-lmd accepts three identical or collinear calibration points and writes a
+perfectly well-formed XML** — no exception, no NaN. The user gets a file that looks correct,
+loads in the LMD software, and cuts in the wrong place. Nothing downstream would catch it,
+so this is the one place it can be caught.
+**Cost accepted:** stopping at the calibration step makes the Extras section below it
+unreachable while a file without calibration points is loaded. Removing the file restores
+it. Worth revisiting by moving Extras above the workflow if anyone is bitten.
+**Verified:** six cases — zero, one and two calibration points, three identical, three
+collinear, and three valid — with only the valid case proceeding.
