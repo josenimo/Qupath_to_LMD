@@ -31,12 +31,21 @@ Cites Makhmut et al., *Cell Systems* 14, 1002-1014.e5 (2023).
 
 ## Layout
 
+Since Phase 0 (`decisions.md` 021), `core.py` and `utils.py` are gone and the library is
+split by responsibility. Library functions take explicit arguments and return values —
+none of them read `st.session_state`.
+
 ```
-streamlit_app.py                  single-page UI, top-to-bottom, ~390 lines
+streamlit_app.py                  UI, session wiring, control flow. No computation.
 src/qupath_to_lmd/
-  core.py                         pipeline: load/QC, triangle QC, saw QC, split, collection
-  utils.py                        plates, wells, dataframes, parsing, geometry helpers
-  mock_streamlit.py               patch_streamlit() — stubs st.* so core/utils run headless
+  model.py                        CollectionPlan, canonical column names, provenance
+  geojson.py                      read_and_qc, explode_classes, extract_coordinates,
+                                  rewrite_classification, sanitize_for_qupath
+  plate.py                        plate shapes, acceptable_wells, layouts, saw parse/convert
+  qc.py                           triangle_qc, validate_saw (report objects, not st calls)
+  export.py                       build_collection, build_bundle, ORIENTATION_TRANSFORM
+  extras.py                       QuPath classes.json generation
+  mock_streamlit.py               patch_streamlit() — stubs st.* for notebook use
   __init__.py                     empty
 demo_Qupath_project/              real QuPath project used as test fixture
   TD_01_verysmall_mIF.geojson     9 features: 6 annotation Polygons + 3 calibration Points
@@ -88,41 +97,48 @@ Verified against both demo files.
 
 The UI is one linear page; each step gates on session state from the previous one.
 
-1. **Upload + QC** — `core.load_and_QC_geojson_file` (`@st.cache_data`).
-   `geopandas.read_file` on the uploaded file. Requires a `name` column or it stops.
-   Then, in order:
+1. **Upload + QC** — `geojson.read_and_qc`, cached in the app by a thin wrapper.
+   `geopandas.read_file`, then `set_crs(None, allow_override=True)`. Raises `GeojsonError`
+   if the file is empty or has no `name`/`classification` column. Then, in order:
    - `Point` geometries with a non-empty `name` become the **calibration point pool**
      (`{name: [x, y]}`); all `Point`s are then dropped from the GeoDataFrame.
-   - Rows with NaN `classification` (unclassified QuPath objects) are dropped, count shown.
+   - Rows with NaN `classification` (unclassified QuPath objects) are dropped, count
+     recorded in the report. Note the demo files' 3 NaN-classification rows *are* the
+     calibration Points, which have already left the frame — so both report 0 here.
    - `classification_name` column derived from `classification` (dict or its `str` repr).
-   - `MultiPolygon`s are tabled on screen and dropped — not supported.
+   - `MultiPolygon`s are recorded in the report and dropped — py-lmd cuts one closed path
+     per shape, so they have no meaning.
+   Returns `(gdf, calibration_points, GeojsonReport)`. The report is rendered by the app,
+   not by the library.
 1.1 **Calibration selection** — three `st.selectbox`es pick 3 names from the pool, order
-   matters. `core.perform_triangle_qc` builds the triangle, reports the % of
-   Polygons/LineStrings intersecting it, warns below 25% (distortion risk).
-1.2 **Optional class split** — `core.make_classes_unique` turns e.g. `T-Cell` into
+   matters. `qc.triangle_qc` returns a `TriangleReport` with the calibration array and the
+   fraction of Polygons/LineStrings intersecting the triangle; `is_concerning` below 25%.
+1.2 **Optional class split** — `geojson.explode_classes` turns e.g. `T-Cell` into
    `T-Cell_001…`, one name per shape, for single-cell collection. Stores
    `original_classification_name` so repeated runs stay idempotent, and rewrites the
-   nested `classification` dict via `utils.update_classification_column`.
+   nested `classification` dict via `geojson.rewrite_classification`.
 2. **Plate layout** — plate type (384/96), margin, row step, column step feed
-   `utils.create_list_of_acceptable_wells`. Two views: `default` (well names, allowed ones
-   green) and `samples` (classes auto-placed into allowed wells, optionally randomized).
-   "Confirm and use this plate layout" → `utils.dataframe_to_saw_dict` →
-   `core.load_and_QC_SamplesandWells`.
+   `plate.acceptable_wells`. Two views: `plate.default_layout` (well names, allowed ones
+   green) and `plate.sample_layout` (classes placed into allowed wells in **sorted** order,
+   optionally randomized; returns the classes that did not fit).
+   "Confirm and use this plate layout" → `plate.layout_to_saw` → `qc.validate_saw`.
 2.3 **Custom samples-and-wells upload** — overrides the generated layout.
-   `utils.parse_dictionary_from_file` reads a `.txt`/`.json` containing a **Python dict
-   literal** and `ast.literal_eval`s it (trailing commas fine, `//` comments not).
-   Returns `{}` on any parse failure. Sets `use_plate_wells = False`.
-3. **Process** — `core.create_collection`:
-   - `geometry.simplify(1)` then `utils.extract_coordinates` (Polygon exterior, or
-     LineString coords; anything else stops).
-   - `Collection(calibration_points=calib_array)` with
-     `orientation_transform = [[1, 0], [0, -1]]` — **flips Y**, because QuPath image
+   `plate.parse_saw_file` reads a `.txt`/`.json` containing a **Python dict literal** and
+   `ast.literal_eval`s it (trailing commas fine, `//` comments not). Raises
+   `SawParseError` with a specific reason. Sets `use_plate_wells = False`.
+3. **Process** — `model.plan_from_class_wells` builds a `CollectionPlan`
+   (`group_key = classification_name`, `well` mapped from the saw dict, unmatched shapes
+   left with no well and reported), then `export.build_collection`:
+   - `geometry.simplify(1)` then `geojson.extract_coordinates` (Polygon exterior, or
+     LineString coords; anything else raises).
+   - `Collection(calibration_points=plan.calibration_array)` with
+     `ORIENTATION_TRANSFORM = [[1, 0], [0, -1]]` — **flips Y**, because QuPath image
      coordinates grow downward and the LMD stage does not.
-   - One `new_shape` per row whose `classification_name` is a key in the saw dict; others
-     are logged as skipped.
-   - Outputs a zip: `<stem>.xml`, `<stem>_384_wellplate.csv`, `samples_and_wells.json`,
-     `<stem>_processed.geojson` (sanitised for QuPath re-import), `collection.png` QC
-     image, and the session log.
+   - One `new_shape` per selected row, in load order, into `plan.shapes["well"]`.
+   - QC image is written to a fresh temp directory, not the working directory.
+   Then `export.build_bundle` zips: `<stem>.xml`, `<stem>_<plate>_wellplate.csv`,
+   `samples_and_wells.json`, `provenance.json`, `<stem>_processed.geojson` (sanitised for
+   QuPath re-import), `collection.png`, and the session log.
 
 **Extra #1** (below the main flow): generates a QuPath `classes.json` from two lists of
 categoricals × replicate count, cycling 6 hard-coded colours as Java signed ints.
@@ -137,7 +153,8 @@ Initialised in the block at the top of `streamlit_app.py`. Any new key belongs h
 | `log_file_path` | temp `.log` path; loguru sink, shipped inside the download zip |
 | `view_mode` | `'default'` \| `'samples'` — which plate table is rendered |
 | `gdf` | the working GeoDataFrame (points removed, `classification_name` added) |
-| `available_points_dict` | `{name: [x, y]}` calibration-point pool from the geojson |
+| `geojson_report` | `GeojsonReport` from the last read, re-rendered on every rerun |
+| `calibration_points` | `{name: [x, y]}` calibration-point pool from the geojson |
 | `calibs` | `[name1, name2, name3]` selected calibration point names, order matters |
 | `calib_array` | 3×2 numpy array of the selected points, passed to `py-lmd` |
 | `saw` | samples-and-wells dict `{class_name: well}` |
@@ -146,7 +163,8 @@ Initialised in the block at the top of `streamlit_app.py`. Any new key belongs h
 | `plate_df` | the displayed plate DataFrame |
 | `plate_gen_params` | dict of plate/margin/step/randomize; change triggers regeneration |
 | `show_saw_uploader` | whether the custom-saw uploader is visible |
-| `xml_content`, `csv_content`, `zip_buffer` | processed outputs held for download |
+| `zip_buffer`, `bundle_name` | the download bundle and its filename |
+| `collection_image` | path to the QC image of the last processed collection |
 
 ## Domain constants and conventions
 
@@ -161,11 +179,14 @@ Initialised in the block at the top of `streamlit_app.py`. Any new key belongs h
 
 ## Conventions in the code
 
-- **3-space indentation** dominates `streamlit_app.py`, `core.py`, `utils.py`; a few
-  functions (`load_and_QC_geojson_file`'s point loop, `dataframe_to_saw_dict`,
-  `perform_triangle_qc` internals) are 4-space. Match the block being edited.
-- Every meaningful step logs via loguru **and** surfaces to the user via `st.*`. The log
-  file goes into the download zip, so log lines are part of the support story.
+- **4-space indentation throughout.** The old 3-space style went out with `core.py` and
+  `utils.py` in Phase 0; every remaining file is 4-space.
+- **Library code does not call `st.*`.** `geojson.py`, `plate.py`, `qc.py`, `export.py` and
+  `extras.py` return report objects or raise domain exceptions
+  (`GeojsonError`, `SawParseError`); `streamlit_app.py` decides what to show and whether to
+  stop. Only `mock_streamlit.py` mentions `st` at all, for notebook use.
+- Every meaningful step logs via loguru, and the app surfaces the same information via
+  `st.*`. The log file goes into the download zip, so log lines are part of the support story.
 - `ruff` configured in `pyproject.toml`: line-length 120, target py311, double quotes,
   google docstring convention, `E501` ignored.
 - No test suite in the repo (pytest was removed in `0530833`), though `pytest` is still a
@@ -175,33 +196,45 @@ Initialised in the block at the top of `streamlit_app.py`. Any new key belongs h
 
 Not scope creep — recorded so nobody rediscovers them, and so a fix is a deliberate choice.
 
-- **`geopandas.read_file` tags QuPath GeoJSON as `EPSG:4326`.** The coordinates are image
-  pixels, so the CRS is meaningless: every `.area` / `.distance` / `.centroid` call runs
-  against a geographic projection and emits "Geometry is in a geographic CRS. Results from
-  'area' are likely incorrect". Harmless today because nothing measures area; blocking for
-  anything area- or distance-based. Fix is `crs = None` on read (`ROADMAP.md` Phase 0).
-- `core.load_and_QC_SamplesandWells` validates wells against a **hard-coded 384** grid
-  (`utils.py:141`), so a well like `H20` passes even when the user picked a 96-well plate.
-- The plate CSV in the zip is always named `<stem>_384_wellplate.csv`
-  (`streamlit_app.py:301`) even for 96-well runs; `utils.sample_placement` itself does
-  respect the chosen plate type.
-- `core.create_collection` writes the QC image to `./TheCollection.png`
-  (`core.py:244`), and Extra #1 writes `./classes.json`, both into the process working
-  directory rather than a temp dir. Shared-server side effect; also means concurrent users
-  can overwrite each other.
-- `utils.create_dataframe_samples_wells` zips classes to wells with `strict=False`, so when
-  there are more classes than allowed wells the surplus classes are silently unplaced after
-  the "More classes than allowed wells" warning.
-- Class→well assignment iterates a `set` of class names, so ordering is not stable between
-  runs even with randomize off.
-- `utils.parse_dictionary_from_file` returns `{}` on a parse error and only logs it; the
-  caller then reports "loaded and checked" for an empty dict. The `#TODO` in
-  `load_and_QC_SamplesandWells` about typos causing index errors is the same area.
-- Missing classes (in geojson, absent from saw) `st.error` but deliberately do not stop —
-  the `st.stop()` is commented out at `core.py:157`.
-- `ruff check .` currently reports **32 findings** (12 W291, 9 W293, 3 I001, plus B007,
-  BLE001, C416, D103, D205, D212, F401, UP015). Pre-existing baseline, not caused by
-  current work.
-- Extra #1 writes `classes.json` to the repo root at runtime; `.gitignore` does not cover
-  it, so it shows up as an untracked file after any local run of that feature.
-  (`assets/classes.json` is a tracked example and unrelated.)
+Still open:
+
+- **`randomize` has no seed.** `plate.sample_layout` calls `random.sample` unseeded, so a
+  randomized layout cannot be reproduced or reported in a methods section. Phase 4
+  introduces seeds for the selection engine; this should join them.
+- **`py-lmd`'s `Collection.plot` blocks under a GUI matplotlib backend.** Found while
+  building the Phase 0 harness: a plain `python` run on macOS hangs indefinitely unless
+  `MPLBACKEND=Agg` is set. Harmless in the deployed app and under `streamlit run` (no
+  display, so Agg is chosen), but any headless script that builds a collection must set it.
+- `pytest` is still a declared dependency with no tests (`decisions.md` 006/008).
+- `ruff check .` reports **5 findings**, all in `mock_streamlit.py` (I001, D205, D212,
+  2×W293) — down from 32 before Phase 0, because the files carrying the rest are gone.
+  Pre-existing backlog, untouched by Phase 0 per `CLAUDE.md` rule 6.
+
+Fixed in Phase 0 (`decisions.md` 021), kept here briefly so the history is legible:
+
+- The `EPSG:4326` CRS mislabelling — `geojson.read_and_qc` now clears it, so `.area` and
+  `.distance` work on pixels. This was blocking every area-based feature in Phases 2–4.
+- Wells were validated against a hard-coded 384 grid, so `K5` passed on a 96-well plate.
+  `qc.validate_saw` now takes the plate type.
+- The plate CSV in the bundle was always named `_384_wellplate.csv`.
+- The QC image was written to `./TheCollection.png` and Extra #1 wrote `./classes.json`,
+  both into the working directory — a real problem on a shared server, where concurrent
+  users overwrite each other. Both now go to a temp dir or straight to the download.
+- Surplus classes beyond the available wells were dropped after a warning that did not say
+  which ones; `plate.sample_layout` now returns them and the app names them.
+- Class→well assignment iterated a `set`, so the layout changed between reruns. Now sorted.
+- `parse_dictionary_from_file` returned `{}` on a parse error, and the app then reported
+  "loaded and checked" for an empty dict. Now raises `SawParseError` with the reason.
+- The MultiPolygon warning selected an `annotation_name` column that QuPath never writes,
+  so that branch would have raised `KeyError` for any user who actually had a MultiPolygon.
+  Verified against a synthetic file, then fixed.
+
+## Regression harness
+
+There is no test suite, so the Phase 0 refactor was gated on byte-identical output
+(`decisions.md` 014). The scripts live in the session scratchpad rather than the repo, and
+the recipe is worth keeping: capture XML+CSV from the pre-refactor code for four cases
+(annotations, cells, cells exploded, annotations on a 96 plate), then re-run the same cases
+through the new API and compare bytes. All eight artefacts matched. Any future change to
+coordinate handling, calibration ordering or simplification should be checked the same way —
+and note it needs `MPLBACKEND=Agg` (see above).

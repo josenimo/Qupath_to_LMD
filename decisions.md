@@ -282,3 +282,25 @@ Not designed for in the current phases; `ROADMAP.md` open question 5 keeps the c
 **Why:** It affects how well assignment is scoped (per file vs across files) and so is
 better answered before Phase 3 hardens well assignment than retrofitted after — but it does
 not block Phases 0–2.
+
+## 021 — Phase 0 delivered: library split, CollectionPlan, CRS fix
+**Date:** 2026-08-26 · **Status:** active
+**Decision:** `core.py` and `utils.py` are deleted and replaced by `model.py`,
+`geojson.py`, `plate.py`, `qc.py`, `export.py` and `extras.py`. Library functions take
+explicit arguments and return report objects or raise domain exceptions; only
+`streamlit_app.py` touches `st.*` and `st.session_state`. The legacy workflow runs through
+`CollectionPlan`. Verified byte-identical XML and CSV across four cases per 014.
+**Why:** `ROADMAP.md` Phase 0. The seam has to exist before a second workflow can hang off
+it, and the `st.session_state` reads inside library code made anything untestable outside
+Streamlit — the golden harness could only be written because the new functions are pure.
+**Behaviour changes shipped alongside**, each a bug the refactor put in reach:
+CRS mislabelling cleared; wells validated against the chosen plate rather than always 384;
+plate-aware CSV filename; QC image and `classes.json` no longer written to the working
+directory; unplaced surplus classes named rather than merely counted; plate layout sorted so
+it is stable across reruns; `SawParseError` raised instead of silently returning `{}`; and
+the MultiPolygon branch fixed, which would have raised `KeyError` for any user who had one.
+`provenance.json` is now in the download bundle (009).
+**Alternatives rejected:** Keeping `core.py`/`utils.py` and adding modules alongside — the
+duplication would have to be unpicked later, and the point of Phase 0 is that Phase 1
+inherits one clear structure. Indentation normalises to 4-space as a side effect of the
+files being new, so the codebase is now internally consistent (`CLAUDE.md` rule 9).
