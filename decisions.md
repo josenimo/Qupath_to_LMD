@@ -705,3 +705,27 @@ follows 019: expose the number, explain it, let the user decide.
 **Verified:** at 1 px, 900 of 3193 Tumor cells selects with 0 conflicts while 2700 of 3193
 reports 2206 — unavoidable at 85% of a dense class, and now visible instead of hidden.
 Cost 0.09 s over 8537 shapes.
+
+## 045 — One plate menu and one plate renderer for both workflows
+**Date:** 2026-08-26 · **Status:** active
+**Decision:** Jose's request. `ui_shared.plate_settings_step` is the only place plate options
+live — type, margin, row spacing, column spacing, randomize — and `ui_shared.plate_preview` is
+the only plate renderer. Both workflows use both. The randomize toggle moves out of the
+annotations-only layout step into the shared options. The cell workflow shows its plate
+**directly under the plate options**, because the well assignment depends only on the budgets
+(`budget.group_keys`), not on which shapes the selection picks.
+**Why:** the two workflows had drifted — the cell workflow had a duplicate step heading, no
+randomize toggle, and showed its plate at the end of the *next* step. None of that was
+intended; it accumulated across Phases 3 and 4. A user should not have to learn two plate
+interfaces because of an implementation detail.
+**The one difference kept, and why:** the annotations workflow retains its **Confirm** button
+and custom samples-and-wells upload. There the user maps classes to wells themselves, and the
+upload is an established escape hatch for schemes the plate builder cannot express. The cell
+workflow derives `class_r<replicate>` groups from the budgets and assigns them automatically,
+so there is nothing to confirm and nothing the builder cannot express. If a cell-workflow user
+ever needs to hand-place groups, the upload path should be added there too rather than the
+confirm gate.
+**Also:** `plate.assign_wells` is seeded, so a randomized layout is reproducible — closing the
+unseeded-randomize gap that had been recorded as a known quirk. `plan_from_selection` now
+accepts the assignment already shown to the user, so a replicate that ends up with no shapes
+keeps its well rather than quietly disappearing from the plate.

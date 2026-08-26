@@ -116,6 +116,7 @@ def plan_from_selection(
     calibration_names: list[str],
     calibration_array: numpy.ndarray,
     *,
+    samples_and_wells: dict[str, str] | None = None,
     source_file: str | None = None,
     session_id: str | None = None,
     pixel_size_um: float | None = None,
@@ -126,7 +127,10 @@ def plan_from_selection(
     Args:
         gdf: the QC'd shapes.
         replicate_of: replicate number per shape index, NA for shapes not selected.
-        wells: usable wells, consumed in order — one per group.
+        wells: usable wells, consumed in order — one per group. Ignored when
+            `samples_and_wells` is given.
+        samples_and_wells: an assignment already shown to the user. Passing it keeps the
+            plate the user approved, including groups that ended up with no shapes.
         calibration_names: the three chosen point names.
         calibration_array: their coordinates.
         source_file: uploaded filename, for the bundle.
@@ -149,11 +153,16 @@ def plan_from_selection(
         + shapes.loc[selected, REPLICATE].astype(int).astype(str)
     )
 
-    # Groups are sorted so the same selection always lands in the same wells.
-    groups = sorted(shapes.loc[selected, GROUP_KEY].unique())
-    samples_and_wells = dict(zip(groups, wells, strict=False))
-    if len(groups) > len(wells):
-        logger.warning(f"{len(groups) - len(wells)} groups have no well and will not be cut")
+    if samples_and_wells is None:
+        # Groups are sorted so the same selection always lands in the same wells.
+        groups = sorted(shapes.loc[selected, GROUP_KEY].unique())
+        samples_and_wells = dict(zip(groups, wells, strict=False))
+        if len(groups) > len(wells):
+            logger.warning(f"{len(groups) - len(wells)} groups have no well and will not be cut")
+    else:
+        missing = sorted(set(shapes.loc[selected, GROUP_KEY]) - set(samples_and_wells))
+        if missing:
+            logger.warning(f"{len(missing)} selected groups have no well: {missing[:5]}")
 
     shapes[WELL] = shapes[GROUP_KEY].map(samples_and_wells)
 

@@ -165,6 +165,14 @@ the two workflows reach the shared steps at different points.
    green) and `plate.sample_layout` (classes placed into allowed wells in **sorted** order,
    optionally randomized; returns the classes that did not fit).
    "Confirm and use this plate layout" → `plate.layout_to_saw` → `qc.validate_saw`.
+2.2 **Plate rendering is shared.** `ui_shared.plate_settings_step` is the only place plate
+   options live (type, margin, row/column spacing, randomize) and
+   `ui_shared.plate_preview` is the only plate renderer, so both workflows show the same
+   menu and the same table (`decisions.md` 045). The one remaining difference is
+   deliberate: the annotations workflow keeps its **Confirm** button and custom
+   samples-and-wells upload, because there the user maps classes to wells themselves; the
+   cell workflow derives `class_r<replicate>` groups from the budgets and assigns them
+   automatically, so there is nothing to confirm.
 2.3 **Custom samples-and-wells upload** — overrides the generated layout.
    `plate.parse_saw_file` reads a `.txt`/`.json` containing a **Python dict literal** and
    `ast.literal_eval`s it (trailing commas fine, `//` comments not). Raises
@@ -295,9 +303,13 @@ categoricals × replicate count, cycling 6 hard-coded colours as Java signed int
   2206, which is genuinely unavoidable at 85% of a dense class.
 - **Seed is exposed and recorded** in `provenance.json`, so a selection can be reported in a
   methods section and reproduced.
-- `model.plan_from_selection` assigns one well per `class_r<replicate>` group, groups sorted so
-  the same selection always lands in the same wells, and returns the group-to-well mapping the
-  export path needs. Groups beyond the available wells are reported, never silently dropped.
+- **The well assignment is computed at the plate step, before the selection runs**
+  (`decisions.md` 045). `budget.group_keys` derives the `class_r<replicate>` groups from the
+  budgets alone, and `plate.assign_wells` maps them to wells — sorted, so the same plan always
+  lands the same way, and seeded when randomized so a shuffled layout is still reproducible.
+  `model.plan_from_selection` then takes that approved mapping rather than recomputing it, so
+  a replicate that ends up with no shapes keeps its well instead of quietly vanishing.
+  Groups beyond the available wells are reported, never silently dropped.
 
 ## Session state keys
 
@@ -385,9 +397,6 @@ Still open:
   (`st.caption`, not a warning) when they are not. Do not build anything that depends on
   measurements being there.
 
-- **`randomize` has no seed.** `plate.sample_layout` calls `random.sample` unseeded, so a
-  randomized layout cannot be reproduced or reported in a methods section. Phase 4
-  introduces seeds for the selection engine; this should join them.
 - **`py-lmd` accepts a degenerate calibration triangle silently.** Given three identical or
   collinear calibration points it writes a normal-looking XML with no error and no NaN, so
   the file looks fine and cuts in the wrong place. The app blocks this itself

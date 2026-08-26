@@ -10,7 +10,7 @@ import pandas
 import streamlit as st
 from loguru import logger
 
-from qupath_to_lmd import budget, export, plot, selection, stats, ui_shared
+from qupath_to_lmd import budget, export, plate, plot, selection, stats, ui_shared
 from qupath_to_lmd.model import CLASS_NAME, plan_from_selection
 
 
@@ -195,18 +195,33 @@ def _report_feasibility(table: pandas.DataFrame, budgets: list[budget.ClassBudge
 
 
 def capacity_step(budgets: list[budget.ClassBudget], step: str = "7") -> dict:
-    """Plate settings, and whether the plan fits on the plate."""
-    st.markdown(f"## Step {step}: Plate")
+    """Plate settings, the well assignment they produce, and whether it fits.
+
+    The assignment depends only on the budgets — one well per class per replicate — so the
+    whole layout can be shown here, before the selection decides *which* shapes fill it.
+    """
     settings = ui_shared.plate_settings_step(step=step)
 
-    needed = budget.total_groups(budgets)
-    usable = len(settings["wells"])
-    st.write(f"This plan needs **{needed} wells**, one per replicate. This plate offers **{usable}**.")
-    if needed > usable:
+    groups = budget.group_keys(budgets)
+    usable = settings["wells"]
+    st.write(
+        f"This plan needs **{len(groups)} wells**, one per replicate per class. "
+        f"This plate offers **{len(usable)}**."
+    )
+    if len(groups) > len(usable):
         st.warning(
-            f"{needed - usable} more wells are needed than the plate offers. Reduce the "
-            "replicates, lower the margin or spacing, or use a 384 well plate."
+            f"{len(groups) - len(usable)} more wells are needed than the plate offers, so that "
+            "many groups will not be collected. Reduce the replicates, lower the margin or "
+            "spacing, or use a 384 well plate."
         )
+
+    samples_and_wells = plate.assign_wells(groups, usable, randomize=settings["randomize"])
+    st.session_state.saw = samples_and_wells
+    ui_shared.plate_preview(
+        samples_and_wells, settings["plate_type"], wells=usable, key_suffix="cells"
+    )
+
+    settings["samples_and_wells"] = samples_and_wells
     return settings
 
 
@@ -356,6 +371,7 @@ def _export_selection(result, settings: dict, params: selection.SelectionParams,
         gdf=st.session_state.gdf,
         replicate_of=result.replicate_of,
         wells=settings["wells"],
+        samples_and_wells=settings.get("samples_and_wells"),
         calibration_names=st.session_state.calibs,
         calibration_array=st.session_state.calib_array,
         source_file=st.session_state.file_name,
@@ -367,6 +383,7 @@ def _export_selection(result, settings: dict, params: selection.SelectionParams,
             "margins": settings["margins"],
             "step_row": settings["step_row"],
             "step_col": settings["step_col"],
+            "randomize_wells": settings["randomize"],
             "selection_mode": params.mode.value,
             "avoid_adjacent": params.avoid_adjacent,
             "neighbour_distance_px": params.neighbour_distance_px,
@@ -384,8 +401,6 @@ def _export_selection(result, settings: dict, params: selection.SelectionParams,
         )
 
     st.session_state.saw = samples_and_wells
-    st.markdown(f"**Plate layout — {len(samples_and_wells)} wells used**")
-    ui_shared.plate_preview(samples_and_wells, settings["plate_type"])
 
     ui_shared.export_step(settings, lambda _settings: plan, step="9")
 

@@ -304,7 +304,7 @@ def plate_settings_step(step: str = "5") -> dict:
                 """)
     st.write("You can increase plate size by dragging bottom right corner")
 
-    plate_col, margin_col, step_row_col, step_col_col = st.columns(4)
+    plate_col, margin_col, step_row_col, step_col_col, random_col = st.columns(5)
     with plate_col:
         plate_string = st.selectbox("Select a plate type", ("384 well plate", "96 well plate"))
     with margin_col:
@@ -313,6 +313,16 @@ def plate_settings_step(step: str = "5") -> dict:
         step_row = st.number_input("Space between rows", min_value=1, max_value=10, value=1)
     with step_col_col:
         step_col = st.number_input("Space between columns", min_value=1, max_value=10, value=1)
+    with random_col:
+        randomize = st.toggle(
+            "Randomize wells",
+            value=False,
+            help=(
+                "Spread samples over the plate instead of filling it in order, so a "
+                "systematic plate-position effect cannot be mistaken for a biological one. "
+                "Seeded, so the layout is still reproducible."
+            ),
+        )
 
     plate_type = plate_string.split(" ")[0]
     return {
@@ -320,6 +330,7 @@ def plate_settings_step(step: str = "5") -> dict:
         "margins": margin,
         "step_row": step_row,
         "step_col": step_col,
+        "randomize": randomize,
         "wells": plate.acceptable_wells(
             plate=plate_type, margins=margin, step_row=step_row, step_col=step_col
         ),
@@ -330,7 +341,9 @@ def plate_layout_step(settings: dict, uploaded_file) -> None:
     """Plate views, layout confirmation, and the custom samples-and-wells override."""
     plate_type, wells = settings["plate_type"], settings["wells"]
 
-    col1, col2, col3 = st.columns(3)
+    randomize = settings["randomize"]
+
+    col1, col2 = st.columns(2)
     with col1:
         if st.button("Show plate format with default wells"):
             st.session_state.view_mode = "default"
@@ -342,11 +355,8 @@ def plate_layout_step(settings: dict, uploaded_file) -> None:
                 st.warning("Please upload a file first.")
             else:
                 st.session_state.view_mode = "samples"
-    with col3:
-        randomize = st.toggle("Randomize samples", value=False)
 
-    params = {k: settings[k] for k in ("plate_type", "margins", "step_row", "step_col")}
-    params["randomize"] = randomize
+    params = {k: settings[k] for k in ("plate_type", "margins", "step_row", "step_col", "randomize")}
     params_changed = st.session_state.plate_gen_params != params
 
     if st.session_state.view_mode == "default":
@@ -373,8 +383,12 @@ def plate_layout_step(settings: dict, uploaded_file) -> None:
                         "Reduce the margin or spacing, use a 384 well plate, or collect in two rounds."
                     )
             if st.session_state.plate_df is not None:
-                classes = set(st.session_state.gdf[CLASS_NAME])
-                st.dataframe(st.session_state.plate_df.style.map(plate.highlight(classes)), width="stretch")
+                plate_preview(
+                    plate.layout_to_saw(st.session_state.plate_df),
+                    plate_type,
+                    wells=wells,
+                    key_suffix="legacy",
+                )
 
     if st.button("Confirm and use this plate layout"):
         logger.info("Confirm and use this plate layout -- ButtonPress")
@@ -388,16 +402,6 @@ def plate_layout_step(settings: dict, uploaded_file) -> None:
             ), plate_type, success="Samples and wells layout confirmed, you are ready to process!")
         else:
             st.warning("Please generate and view a plate layout with samples from your GeoJSON first.")
-
-    if st.session_state.saw is not None and st.session_state.use_plate_wells:
-        st.download_button(
-            label="Download samples and wells setup",
-            data=json.dumps(st.session_state.saw, indent=4),
-            file_name="samples_and_wells.json",
-            mime="application/json",
-        )
-        with st.expander("View Samples and Wells Dictionary", expanded=False):
-            st.write(st.session_state.saw)
 
     _custom_saw_step(plate_type)
 
@@ -462,20 +466,36 @@ def _custom_saw_step(plate_type: str) -> None:
     _report_saw(report, plate_type, success=f"Custom samples and wells loaded and checked: {len(candidate)} classes.")
 
 
-def plate_preview(samples_and_wells: dict[str, str], plate_type: str) -> None:
-    """Show the plate with each group in its well, and offer the scheme as a download."""
+def plate_preview(
+    samples_and_wells: dict[str, str],
+    plate_type: str,
+    wells: list[str] | None = None,
+    key_suffix: str = "",
+) -> None:
+    """Show the plate with each sample in its well, and offer the scheme as a download.
+
+    The single plate renderer for both workflows, so what a user sees does not depend on
+    which one they picked (`decisions.md` 045).
+    """
     if not samples_and_wells:
         st.warning("No wells assigned yet.")
         return
 
     layout = plate.placement_dataframe(samples_and_wells, plate=plate_type)
     st.dataframe(layout.style.map(plate.highlight(set(samples_and_wells))), width="stretch")
+    st.caption(f"{len(samples_and_wells)} wells in use on a {plate_type} well plate.")
+
+    if wells:
+        with st.expander(f"Which wells the current margin and spacing leave usable ({len(wells)})"):
+            usable = plate.default_layout(plate=plate_type)
+            st.dataframe(usable.style.map(plate.highlight(set(wells))), width="stretch")
+
     st.download_button(
         label="Download samples and wells setup",
         data=json.dumps(samples_and_wells, indent=4),
         file_name="samples_and_wells.json",
         mime="application/json",
-        key=f"saw_download_{plate_type}_{len(samples_and_wells)}",
+        key=f"saw_download_{plate_type}_{len(samples_and_wells)}_{key_suffix}",
     )
 
 
