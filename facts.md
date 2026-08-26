@@ -3,8 +3,8 @@
 Living record of what is true about this app. Corrected in place when it goes stale — not
 append-only (that is `decisions.md`). Last verified: 2026-08-26.
 
-Planned restructuring into two workflows: `ROADMAP.md`. Everything below describes the app
-**as it is today**, before that work.
+Restructuring into two workflows is underway: `ROADMAP.md`. Phases 0 and 1 are done, so
+the app now has a workflow router; the cell workflow itself is still scaffolding.
 
 ---
 
@@ -36,20 +36,32 @@ split by responsibility. Library functions take explicit arguments and return va
 none of them read `st.session_state`.
 
 ```
-streamlit_app.py                  UI, session wiring, control flow. No computation.
+streamlit_app.py                  session init, logging, and the workflow router. Thin.
 src/qupath_to_lmd/
+  === library layer: pure, no Streamlit ===
   model.py                        CollectionPlan, canonical column names, provenance
   geojson.py                      read_and_qc, explode_classes, extract_coordinates,
-                                  rewrite_classification, sanitize_for_qupath
+                                  rewrite_classification, sanitize_for_qupath,
+                                  measurements_frame, area_measurement_column
   plate.py                        plate shapes, acceptable_wells, layouts, saw parse/convert
-  qc.py                           triangle_qc, validate_saw (report objects, not st calls)
+  qc.py                           triangle_qc, validate_saw, pixel_size_qc (report objects)
   export.py                       build_collection, build_bundle, ORIENTATION_TRANSFORM
   extras.py                       QuPath classes.json generation
+  === UI layer: Streamlit, owns session_state ===
+  ui_shared.py                    steps both workflows use
+  ui_legacy.py                    annotations workflow (frozen as of Phase 1)
+  ui_cells.py                     cell-segmentation workflow (scaffolding only so far)
+  === other ===
   mock_streamlit.py               patch_streamlit() — stubs st.* for notebook use
   __init__.py                     empty
+tools/
+  golden_harness.py               byte-equality regression gate
+  golden/                         8 reference artefacts
 demo_Qupath_project/              real QuPath project used as test fixture
   TD_01_verysmall_mIF.geojson     9 features: 6 annotation Polygons + 3 calibration Points
   Single_cells.geojson            131 features: 121 cells + 7 annotations + 3 Points
+  multiclass_cells.geojson        72 cells from a real QuPath 0.7.0 export: single-class,
+                                  multi-class and unclassified, plus 3 added calib points
   demo_samples_and_wells.txt      python-dict-literal saw file for the upload path
   QuPath_scripts/*.groovy         detections_to_annotations, select_random_detections
 assets/                           screenshots, example classes.json
@@ -66,8 +78,19 @@ Verified against both demo files.
   `"detection"`. **`objectType` is the natural discriminator between the two planned
   workflows**, and a single file can legitimately mix them (`Single_cells.geojson` has both).
 - `classification` — arrives as a **JSON string** (`'{ "name": ..., "color": [r,g,b] }'`),
-  not a dict, hence the `ast.literal_eval` on it. `None` for unclassified objects.
-- `name` — set on calibration Points, `None` on annotations and cells.
+  not a dict, hence the `ast.literal_eval` on it. Absent for unclassified objects. Comes in
+  three shapes, all seen in one real QuPath 0.7.0 export:
+  - `{"name": "Tumor", "color": [...]}` — a single class
+  - `{"names": ["Tumor", "Immune cells"], "color": [...]}` — **multi-class**, note the
+    plural. Sorted and joined with `--` (`geojson.MULTICLASS_SEPARATOR`) into one flat
+    combined class the user can assign a well to, e.g. `Immune cells--Tumor`. Sorted so one
+    set of classes always yields one class name regardless of the order QuPath wrote them.
+  - missing entirely — unclassified, dropped with a count
+- `name` — set on calibration Points, `None` on annotations and cells. **QuPath omits a
+  property entirely when no object in the export has it**, so a file with no calibration
+  points has no `name` column at all. That is the single most common shape of a "broken"
+  export and it is not broken — the user just has not added the points, or exported a
+  selection that left them out.
 - `isLocked` — present on annotations, NaN elsewhere.
 - `measurements` — **only on cells/detections**, a JSON string with QuPath's per-object
   measurements. `Single_cells.geojson` carries **126 fields** per cell:
@@ -95,7 +118,15 @@ Verified against both demo files.
 
 ## The pipeline, step by step
 
-The UI is one linear page; each step gates on session state from the previous one.
+One page, top to bottom; each step gates on session state from the previous one. Steps 1–3
+are shared, then the router dispatches to one of two workflows.
+
+**Shared:** 1 upload + QC · 2 workflow choice · 3 calibration points.
+**Legacy then continues:** 4 optional class split · 5 plate layout · 6 process and download.
+**Cells then continues:** 4 image scale (µm/px) · 5 onwards not built yet.
+
+Step numbers are passed into the `ui_shared` step functions rather than hard-coded, because
+the two workflows reach the shared steps at different points.
 
 1. **Upload + QC** — `geojson.read_and_qc`, cached in the app by a thin wrapper.
    `geopandas.read_file`, then `set_crs(None, allow_override=True)`. Raises `GeojsonError`
@@ -111,8 +142,14 @@ The UI is one linear page; each step gates on session state from the previous on
    Returns `(gdf, calibration_points, GeojsonReport)`. The report is rendered by the app,
    not by the library.
 1.1 **Calibration selection** — three `st.selectbox`es pick 3 names from the pool, order
-   matters. `qc.triangle_qc` returns a `TriangleReport` with the calibration array and the
-   fraction of Polygons/LineStrings intersecting the triangle; `is_concerning` below 25%.
+   matters. `qc.triangle_qc` returns a `TriangleReport` with the calibration array, the
+   triangle area, and the fraction of Polygons/LineStrings intersecting it;
+   `is_concerning` below 25%, `is_degenerate` when the area is 0.
+   **Two hard stops here** (`decisions.md` 031), the only blocking checks in the app besides
+   an unreadable file: fewer than three calibration points in the file, and three points that
+   do not form a triangle (a repeat, or all three collinear). Both make every downstream
+   output meaningless, and **py-lmd writes a well-formed XML for a degenerate triangle
+   without complaining** — verified — so nothing further would catch it.
 1.2 **Optional class split** — `geojson.explode_classes` turns e.g. `T-Cell` into
    `T-Cell_001…`, one name per shape, for single-cell collection. Stores
    `original_classification_name` so repeated runs stay idempotent, and rewrites the
@@ -143,6 +180,21 @@ The UI is one linear page; each step gates on session state from the previous on
 **Extra #1** (below the main flow): generates a QuPath `classes.json` from two lists of
 categoricals × replicate count, cycling 6 hard-coded colours as Java signed ints.
 
+## Workflow routing and image scale (Phase 1)
+
+- The router suggests a workflow from `objectType` counts: more cells/detections than
+  annotations suggests the cell workflow, otherwise annotations. It is a **suggestion** —
+  the radio is always user-changeable, and legacy is the default before any file is loaded.
+  Verified on both demo files (`Single_cells.geojson` → cells, `TD_01…` → legacy).
+- `qc.pixel_size_qc` cross-checks the user's µm/px against `sqrt(Cell: Area / polygon area)`
+  and warns above 5% disagreement. On `Single_cells.geojson` the implied value is
+  0.3467 µm/px with 0.23% spread, so entering 3.467 is flagged as 10.00×. Files without area
+  measurements are the normal case, so the check reports quietly that it could not run. The
+  entered value is never overwritten (`decisions.md` 011, 029).
+- `geojson.measurements_frame` explodes the `measurements` JSON into a DataFrame indexed
+  like the input frame. Phase 2's per-class statistics will build on it.
+
+
 ## Session state keys
 
 Initialised in the block at the top of `streamlit_app.py`. Any new key belongs here too.
@@ -151,6 +203,8 @@ Initialised in the block at the top of `streamlit_app.py`. Any new key belongs h
 | --- | --- |
 | `session_id` | uuid4 string, shown to the user for bug reports, names the log in the zip |
 | `log_file_path` | temp `.log` path; loguru sink, shipped inside the download zip |
+| `workflow` | `'legacy'` \| `'cells'` — which workflow the router dispatched to |
+| `pixel_size_um` | µm per pixel, entered by the user; `None` until they do |
 | `view_mode` | `'default'` \| `'samples'` — which plate table is rendered |
 | `gdf` | the working GeoDataFrame (points removed, `classification_name` added) |
 | `geojson_report` | `GeojsonReport` from the last read, re-rendered on every rerun |
@@ -187,6 +241,17 @@ Initialised in the block at the top of `streamlit_app.py`. Any new key belongs h
   stop. Only `mock_streamlit.py` mentions `st` at all, for notebook use.
 - Every meaningful step logs via loguru, and the app surfaces the same information via
   `st.*`. The log file goes into the download zip, so log lines are part of the support story.
+- **`st.number_input` rules, learned the hard way** (a value snapping back after entry):
+  - Never pass `value=` on reruns to a widget that also has `key=`. With a key, the widget's
+    own state is the source of truth; re-seeding `value` from `session_state` fights it.
+    Pass `value=None` once and read the return value.
+  - `step` is rendered as the HTML input's `step` attribute and **browsers snap entries to
+    that grid**. A `step` coarser than `format` can display silently rounds typed input —
+    `step=0.01` with `format="%.4f"` turns 0.3467 into 0.35. Keep them matched.
+  - `value=None` makes the field start genuinely empty and return `None` until the user
+    types, which is better than a `0.0` sentinel that has to be told apart from a real entry.
+  - Pixel size is therefore `step=1e-4`, `format="%.4f"`, `min_value=1e-4` — see the
+    `PIXEL_SIZE_*` constants in `ui_shared.py`. Values with more than 4 decimals are rounded.
 - `ruff` configured in `pyproject.toml`: line-length 120, target py311, double quotes,
   google docstring convention, `E501` ignored.
 - No test suite in the repo (pytest was removed in `0530833`), though `pytest` is still a
@@ -198,9 +263,21 @@ Not scope creep — recorded so nobody rediscovers them, and so a fix is a delib
 
 Still open:
 
+- **Nothing in the app requires QuPath `measurements`.** Areas are computed from the shape
+  geometry and the user's µm/px, so a plain export without measurements is fully supported —
+  which matters because QuPath only includes them if the user ticks the option, and a real
+  14145-cell export had none. `qc.pixel_size_qc` is therefore **opportunistic**: it
+  cross-checks µm/px only when area measurements happen to be present, and says so quietly
+  (`st.caption`, not a warning) when they are not. Do not build anything that depends on
+  measurements being there.
+
 - **`randomize` has no seed.** `plate.sample_layout` calls `random.sample` unseeded, so a
   randomized layout cannot be reproduced or reported in a methods section. Phase 4
   introduces seeds for the selection engine; this should join them.
+- **`py-lmd` accepts a degenerate calibration triangle silently.** Given three identical or
+  collinear calibration points it writes a normal-looking XML with no error and no NaN, so
+  the file looks fine and cuts in the wrong place. The app blocks this itself
+  (`decisions.md` 031); do not assume py-lmd validates calibration geometry.
 - **`py-lmd`'s `Collection.plot` calls `plt.show()`** (`lmd/lib.py:182`), so it blocks
   forever under a GUI matplotlib backend. A plain `python` run on macOS hangs unless
   `MPLBACKEND=Agg` is set; under Agg it merely warns "FigureCanvasAgg is non-interactive".
@@ -239,10 +316,11 @@ uv run python tools/golden_harness.py check      # compare against the golden fi
 uv run python tools/golden_harness.py capture    # re-bless, only when output should change
 ```
 
-Four cases, each covering a path where a change could silently move coordinates:
+Five cases, each covering a path where a change could silently move coordinates:
 `annotations` (ordinary mini-bulk), `cells` (128 shapes with measurements),
-`cells_exploded` (one well per shape), `annotations_96` (different plate geometry). Each
-produces an XML and a CSV, so 8 artefacts.
+`cells_exploded` (one well per shape), `annotations_96` (different plate geometry),
+`multiclass_cells` (real QuPath 0.7.0 export shape). Each produces an XML and a CSV, so
+10 artefacts.
 
 - The committed golden files are **byte-identical to output captured from the pre-Phase-0
   code**, so the reference traces back to the version that had been in production.

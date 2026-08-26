@@ -48,6 +48,8 @@ CASES = {
     "cells_exploded": {"source": DEMO / "Single_cells.geojson", "explode": ["single_cells_demo"]},
     # plate geometry differs, so the CSV and well validation do too
     "annotations_96": {"source": DEMO / "TD_01_verysmall_mIF.geojson", "plate_type": "96", "margin": 0},
+    # a realistic QuPath 0.7 cell export: multi-class objects and unclassified objects mixed in
+    "multiclass_cells": {"source": DEMO / "multiclass_cells.geojson"},
 }
 
 

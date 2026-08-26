@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 
 import geopandas
 import numpy
+import pandas
 import shapely
 from loguru import logger
 
@@ -17,6 +18,7 @@ class TriangleReport:
     calibration_array: numpy.ndarray
     n_shapes: int = 0
     n_intersecting: int = 0
+    triangle_area: float = 0.0
 
     @property
     def fraction_inside(self) -> float:
@@ -27,6 +29,16 @@ class TriangleReport:
     def is_concerning(self) -> bool:
         """Shapes far outside the triangle get warped by the coordinate transform."""
         return self.n_shapes > 0 and self.fraction_inside < 0.25
+
+    @property
+    def is_degenerate(self) -> bool:
+        """The three points do not form a triangle, so no coordinate transform exists.
+
+        Happens when the same point is picked more than once, or when all three are
+        collinear. py-lmd does not complain — it writes a perfectly well-formed XML whose
+        coordinates are meaningless — so this has to be caught here.
+        """
+        return self.triangle_area <= 0
 
 
 @dataclass
@@ -67,7 +79,12 @@ def triangle_qc(
         calibration_array=calibration_array,
         n_shapes=len(cuttable),
         n_intersecting=int(cuttable.geometry.intersects(triangle).sum()),
+        triangle_area=float(triangle.area),
     )
+
+    if report.is_degenerate:
+        logger.error(f"Calibration points {selected_names} do not form a triangle")
+        return report
 
     logger.info(f"{report.fraction_inside * 100:.2f}% of shapes intersect the calibration triangle")
     if report.is_concerning:
@@ -103,5 +120,65 @@ def validate_saw(
         logger.warning(f"Classes present in the shapes but absent from samples and wells: {report.missing_classes}")
     if report.duplicate_wells:
         logger.warning(f"Wells receiving more than one class: {report.duplicate_wells}")
+
+    return report
+
+
+@dataclass
+class PixelSizeReport:
+    """Cross-check of the user's µm/px against what QuPath's own measurements imply."""
+
+    entered_um_per_px: float
+    n_objects_checked: int = 0
+    implied_um_per_px: float | None = None
+    relative_spread: float | None = None
+
+    @property
+    def ratio(self) -> float | None:
+        """Entered value divided by the implied one. 1.0 means agreement."""
+        if not self.implied_um_per_px:
+            return None
+        return self.entered_um_per_px / self.implied_um_per_px
+
+    @property
+    def is_concerning(self) -> bool:
+        """More than 5% apart. A 10x typo turns an area budget into a different experiment."""
+        return self.ratio is not None and abs(self.ratio - 1) > 0.05
+
+
+def pixel_size_qc(gdf: geopandas.GeoDataFrame, entered_um_per_px: float) -> PixelSizeReport:
+    """Compare an entered µm/px against the scale implied by QuPath's area measurements.
+
+    QuPath writes object areas in µm² while GeoJSON coordinates stay in image pixels, so
+    `sqrt(area_µm² / area_px²)` recovers the scale. Reports only — the entered value is
+    never overwritten (`decisions.md` 011).
+    """
+    from qupath_to_lmd.geojson import area_measurement_column, measurements_frame
+
+    report = PixelSizeReport(entered_um_per_px=entered_um_per_px)
+
+    measurements = measurements_frame(gdf)
+    column = area_measurement_column(measurements)
+    if column is None:
+        logger.info("No area measurements in this file, cannot cross-check pixel size")
+        return report
+
+    area_um2 = pandas.to_numeric(measurements[column], errors="coerce")
+    area_px2 = gdf.geometry.area
+    usable = area_um2.notna() & (area_um2 > 0) & (area_px2 > 0)
+    if not usable.any():
+        return report
+
+    implied = numpy.sqrt(area_um2[usable] / area_px2[usable])
+    report.n_objects_checked = int(usable.sum())
+    report.implied_um_per_px = float(implied.median())
+    report.relative_spread = float(implied.std() / implied.median()) if len(implied) > 1 else 0.0
+
+    logger.info(
+        f"Pixel size: entered {entered_um_per_px} µm/px, "
+        f"{column} implies {report.implied_um_per_px:.4f} over {report.n_objects_checked} objects"
+    )
+    if report.is_concerning:
+        logger.warning(f"Entered pixel size is {report.ratio:.2f}x the implied value")
 
     return report

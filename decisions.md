@@ -328,3 +328,153 @@ harness is a script, and it can be moved under pytest later if a suite ever arri
 **Known gaps, recorded rather than papered over:** no LineString case (no demo file has
 one), nothing covering the UI or the QC/warning behaviour, and it proves "unchanged" rather
 than "correct" — a pre-existing coordinate bug is faithfully preserved.
+
+## 023 — Phase 1 delivered: router, shared steps, and the image-scale input
+**Date:** 2026-08-26 · **Status:** active
+**Decision:** `streamlit_app.py` becomes session init plus a router. Steps 1–3 (upload,
+workflow choice, calibration) are shared; the router then dispatches to `ui_legacy.render`
+or `ui_cells.render`. The `ui_*` modules are the UI layer and may own `st.session_state`;
+the library modules stay pure. `CLAUDE.md` rule 5 is rewritten around that boundary,
+replacing its stale references to `core.py` and `utils.py`.
+**Why:** `ROADMAP.md` Phase 1. The legacy workflow keeps its order and wording so existing
+users are not disoriented, while the second workflow gets somewhere to live.
+**Verified:** golden harness clean — all 8 artefacts identical, so the legacy path is
+untouched and now frozen. Router detection exercised against both demo files with stubbed
+widgets: `Single_cells.geojson` (121 cells vs 7 annotations) defaults to cells,
+`TD_01_verysmall_mIF.geojson` to legacy, no file to legacy with no hint.
+
+## 024 — Step numbers are parameters, not literals
+**Date:** 2026-08-26 · **Status:** active
+**Decision:** The `ui_shared` step functions take a `step` label used in their heading,
+rather than hard-coding "Step 2". The workflows pass their own numbers.
+**Why:** The two workflows reach the shared steps at different points, so a literal is
+wrong for one of them. The first attempt used "Step 1.5" and "Step 1.6" to avoid
+renumbering, which read worse than simply renumbering: the flow is now 1–6 in both
+workflows. Renumbering does shift what "Step 2" means for returning users, which is the
+cost accepted here.
+**Alternatives rejected:** Hard-coding numbers per workflow by duplicating the headings —
+two places to keep in sync for no benefit.
+
+## 025 — Image scale is asked for in the cell workflow, not globally
+**Date:** 2026-08-26 · **Status:** active
+**Decision:** `pixel_size_step` lives in `ui_shared` (both workflows may use it) but is
+only called by the cell workflow. The legacy workflow does not ask for µm/px.
+**Why:** 011 requires the value before any area figure is shown; the legacy workflow shows
+no area figures, so requiring it there would be a new obstacle with no benefit for the
+existing users. The roadmap listed it under "shared steps", which this satisfies as shared
+*code* invoked where area actually matters.
+**Alternatives rejected:** Asking globally — adds a required field to a workflow that does
+not need it. Putting it only in `ui_cells` — Phase 3's area budgets and any future legacy
+area reporting would want it back in the shared module.
+
+## 026 — A file with no calibration points is readable, not rejected
+**Date:** 2026-08-26 · **Status:** active · supersedes the `name`-column gate added in 021
+**Decision:** `read_and_qc` no longer requires a `name` column. Its absence means the file
+has no named point annotations, which is reported as "no calibration points" at the
+calibration step with instructions for adding them in QuPath. Only a genuinely unusable
+file — no features, or no `classification` column at all — still raises `GeojsonError`.
+**Why:** Jose hit this with a real QuPath 0.7.0 export of 14145 segmented cells. QuPath
+omits a property entirely when no object in the export carries it, so a file without
+calibration points has no `name` column, and the app rejected it with "Export as a
+FeatureCollection with named calibration points" — which the user *had* done. The message
+named the wrong cause and blocked a readable file, against 003. Missing calibration points
+is a real problem, but the fix is in QuPath and the app should say so precisely.
+**Alternatives rejected:** Keeping the hard stop with a better message — the file loads
+fine, and the user can still inspect classes and plate layouts while going back to QuPath
+for the points.
+
+## 027 — Multi-class QuPath objects become one combined class
+**Date:** 2026-08-26 · **Status:** active
+**Decision:** A QuPath object classified with several classes exports as
+`{"names": ["Tumor", "Immune cells"]}` — plural. Those names are joined with `": "` into a
+single class, mirroring how QuPath displays derived classes. The count and the resulting
+names are warned about on screen, saying explicitly that such objects are *neither* of
+their parent classes here.
+**Why:** Found in the same export: 1130 of 8537 classified cells were multi-class, and the
+app read them as `None`. That polluted the class list and then crashed the plate layout,
+because `sorted()` cannot compare `None` with a string. Joining is the least surprising
+repair — the class reads the same as it did in QuPath — and a double-positive cell is a
+genuine biological category someone may well want in its own well. Silently folding them
+into one parent class would misassign tissue.
+**Alternatives rejected:** Dropping them with a warning — throws away real data the user
+classified deliberately. Assigning them to the first parent class — silently wrong, and the
+kind of wrong that only shows up in the mass spec. Asking the user per file — a dialog for
+something QuPath already has a display convention for.
+**Consequence:** anything with a classification but no usable name at all is now dropped
+with its own count, so `classification_name` is never `None` downstream.
+
+## 028 — Multi-class names are joined with `--`, sorted, and imply no hierarchy
+**Date:** 2026-08-26 · **Status:** active · **supersedes the separator chosen in 027**
+**Decision:** Jose's call. The multi-class separator is `--`, not `": "`. Class names are
+also sorted before joining, so `["Tumor", "Immune cells"]` and `["Immune cells", "Tumor"]`
+both give `Immune cells--Tumor`.
+**Why:** `": "` reads as a hierarchy — parent and child — and a multi-class object has
+neither. There can easily be four or more classes in a combination, where a colon-chained
+name would be actively misleading. 027's reasoning (mirror QuPath's display) put fidelity
+to QuPath above clarity for the user, which is the wrong trade for a name that decides which
+well tissue lands in. Sorting follows from the same premise: if order carries no meaning,
+two orderings must not produce two classes, or one biological category would silently split
+across two wells.
+**Cost accepted:** the class name is alphabetical rather than in QuPath's own order, so
+`Tumor, Immune cells` in QuPath appears here as `Immune cells--Tumor`.
+**Verified:** renaming shifts the class's alphabetical position, so its auto-assigned well
+moves. Confirmed against the golden files that the **828 coordinate values are byte-identical**
+and only the class-to-well mapping changed (B3 and B4 swapped). `multiclass_cells` goldens
+re-blessed on that basis; the other four cases untouched.
+
+## 029 — The pixel-size cross-check is opportunistic, never required
+**Date:** 2026-08-26 · **Status:** active · refines 011
+**Decision:** Nothing in the app requires QuPath `measurements`. Areas are computed from
+shape geometry and the user's µm/px. When area measurements happen to be present, the
+cross-check runs; when they are not, the app says so in a caption rather than a warning, and
+does not suggest re-exporting.
+**Why:** Jose pointed out that relying on users to tick "include measurements" is
+unreliable — and the real 14145-cell export proves it, having none at all. So the absent
+case is the *normal* case, and warning about it every time trains users to ignore warnings,
+which is expensive in an app whose warnings are the safety mechanism (003). The cross-check
+is a free bonus when the data allows it, not a prerequisite.
+**Consequence for Phase 2:** per-class statistics must derive area from geometry × µm/px,
+never from `Cell: Area`.
+
+## 030 — Pixel size input: empty until typed, 4 decimals, step matched to format
+**Date:** 2026-08-26 · **Status:** active
+**Decision:** The µm/px input starts empty (`value=None`) and returns `None` until the user
+types. It accepts 4 decimal places, with `step` set to `1e-4` to match `format="%.4f"`, and
+a minimum of `1e-4` so zero is not enterable. `value=` is never re-passed on reruns.
+**Why:** Jose reported the field snapping back to a different number after entry. Three
+compounding causes, all mine: `value=` was re-seeded from `session_state` on every rerun
+while the widget also had a `key=`, so the two fought; `step=0.01` was coarser than
+`format="%.4f"`, and since Streamlit renders `step` as the HTML input's `step` attribute,
+browsers snap off-grid entries to it — typing 0.3467 with a 0.01 grid gives 0.35; and the
+`0.0` initial value had to be distinguished from a real entry by `if not entered`, which
+also treats a legitimate 0 as absent.
+**Cost accepted:** a pixel size with more than 4 decimals is rounded, e.g. 0.34675 becomes
+0.3468. Four decimals is what QuPath reports for pixel width, so this is precise enough in
+practice, and the field's help text states the limit rather than leaving it to be discovered.
+**Alternatives rejected:** a free-text field with our own float parsing — accepts any
+representation including scientific notation and cannot snap, but gives up the numeric
+keyboard, the arrows and range validation for a problem the matched step already solves.
+Worth revisiting if snapping is ever reported again, since it is the only option that removes
+the browser from the equation entirely.
+
+## 031 — Missing or degenerate calibration points are hard stops
+**Date:** 2026-08-26 · **Status:** active · supersedes the warning chosen in 026
+**Decision:** Jose's call. The calibration step calls `st.error` and `st.stop()` when the
+file has fewer than three calibration points. Extended to a second case found while
+implementing it: three points that do not form a triangle, because one is repeated or all
+three are collinear. `qc.TriangleReport.is_degenerate` reports it, the UI blocks on it.
+**Why:** 026 made a missing-calibration file merely warn, on the reasoning that the file is
+readable and the user could still look around. Jose overruled that, and correctly — nothing
+downstream can produce a valid collection without three points, so letting the user proceed
+only defers the failure to a worse place. This is the "continuing cannot produce a
+meaningful result" case that 003 reserves `st.stop()` for.
+The degenerate case is worse than missing points and was found by testing rather than
+assumed: **py-lmd accepts three identical or collinear calibration points and writes a
+perfectly well-formed XML** — no exception, no NaN. The user gets a file that looks correct,
+loads in the LMD software, and cuts in the wrong place. Nothing downstream would catch it,
+so this is the one place it can be caught.
+**Cost accepted:** stopping at the calibration step makes the Extras section below it
+unreachable while a file without calibration points is loaded. Removing the file restores
+it. Worth revisiting by moving Extras above the workflow if anyone is bitten.
+**Verified:** six cases — zero, one and two calibration points, three identical, three
+collinear, and three valid — with only the valid case proceeding.
