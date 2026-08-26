@@ -11,20 +11,30 @@ from loguru import logger
 from qupath_to_lmd.model import CLASS_NAME
 
 
-def class_statistics(gdf: geopandas.GeoDataFrame, pixel_size_um: float) -> pandas.DataFrame:
+def class_statistics(
+    gdf: geopandas.GeoDataFrame, pixel_size_um: float | None = None
+) -> pandas.DataFrame:
     """Summarise every class in the frame, one row per class.
 
     Args:
         gdf: QC'd shapes carrying `classification_name`.
-        pixel_size_um: micrometres per pixel; areas are meaningless without it.
+        pixel_size_um: micrometres per pixel. **Optional** — without it only shape counts are
+            returned, because an area in pixels² is not a quantity anyone can reason about
+            experimentally. A user budgeting purely by cell count never needs it
+            (`decisions.md` 038).
 
     Returns:
         A numeric frame indexed by class name. Formatting is the caller's business.
     """
-    if pixel_size_um <= 0:
-        raise ValueError("pixel_size_um must be positive to compute areas")
     if gdf.empty:
         return pandas.DataFrame()
+
+    counts = gdf.groupby(CLASS_NAME).size().rename("shapes").to_frame()
+    if not pixel_size_um:
+        logger.info(f"Computing counts only for {len(counts)} classes (no pixel size given)")
+        return counts.sort_values("shapes", ascending=False)
+    if pixel_size_um <= 0:
+        raise ValueError("pixel_size_um must be positive to compute areas")
 
     logger.info(f"Computing statistics for {gdf[CLASS_NAME].nunique()} classes at {pixel_size_um} µm/px")
 

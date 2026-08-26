@@ -568,3 +568,39 @@ no basis for.
 for most microscopes, and a 2× error in pixel size is a 4× error in every area budget.
 Auto-filling the input from a chosen magnification — 011 and 029 already settled that the
 user enters this value deliberately; prefilling it from a guess undermines that.
+
+## 038 — Pixel size is optional; only area-based features require it
+**Date:** 2026-08-26 · **Status:** active · constrains 011, 029, 037
+**Decision:** Jose's guidance. Some users will budget purely by number of cells and have no
+interest in µm/px. The app nudges them toward entering it but must never require it. Missing
+pixel size disables area figures and area-based budgets, with the reason stated; everything
+expressible in cell counts stays fully available.
+**Why:** 003, applied to a case the earlier pixel-size decisions did not consider. "Collect
+200 cells of this class" is a complete, valid experimental request that needs no scale at
+all, so demanding a number the user may not have would block legitimate work — and invite
+them to type a plausible-looking guess, which is worse than leaving it blank.
+**Consequence:** Phase 2's class table shows counts alone until a scale is entered, and
+Phase 3 offers the cell-count budget mode unconditionally while gating the area mode. Any
+later phase adding an area-based feature must degrade the same way.
+
+## 039 — Phase 3 delivered: replicates, budgets and feasibility
+**Date:** 2026-08-26 · **Status:** active
+**Decision:** `budget.py` holds `BudgetMode` (cells or area), `ClassBudget`, `feasibility`
+and `total_groups`. The cell workflow gains step 6 — a per-class editor for replicates and
+per-replicate amount, with a feasibility table — and step 7, plate settings plus a
+well-capacity check.
+**Why:** `ROADMAP.md` Phase 3. Feasibility is shown *before* any selection runs, because
+this is where an experiment goes wrong: asking three replicates of 500 cells from a class
+holding 1130 is a decision to make knowingly, not to discover afterwards.
+**Details worth keeping:** the editor defaults to the whole class in one replicate — what the
+annotations workflow would do — so the starting point is neutral rather than an invented
+number. The feasibility table reports **how many whole replicates each class can fill**,
+which is the actionable figure rather than a raw shortfall. An area budget without a pixel
+size raises `KeyError` from `budget.feasibility` rather than being quietly skipped, so the
+failure surfaces in the library where it can be tested. The `data_editor` key is an md5 of
+the class selection plus mode, because a fixed key leaves stale rows behind when the
+selection changes.
+**Alternatives rejected:** per-class budget modes — mixing cells and area across classes in
+one plan is harder to reason about than it is useful; revisit if asked. Blocking on
+infeasible budgets — 003, and a partly-filled replicate is sometimes exactly what the user
+wants.
