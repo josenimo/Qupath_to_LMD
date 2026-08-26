@@ -63,6 +63,10 @@ jinja2==3.1.6
     # via
     #   altair
     #   pydeck
+joblib==1.5.3
+    # via
+    #   pynndescent
+    #   scikit-learn
 jsonschema==4.25.1
     # via altair
 jsonschema-specifications==2025.9.1
@@ -78,7 +82,9 @@ kiwisolver==1.4.9
 lazy-loader==0.4
     # via scikit-image
 llvmlite==0.44.0
-    # via numba
+    # via
+    #   numba
+    #   pynndescent
 loguru==0.7.3
     # via qupath-to-lmd (pyproject.toml)
 lxml==6.0.1
@@ -92,7 +98,9 @@ matplotlib-inline==0.1.7
     #   ipykernel
     #   ipython
 narwhals==2.4.0
-    # via altair
+    # via
+    #   altair
+    #   scikit-learn
 nest-asyncio==1.6.0
     # via ipykernel
 networkx==3.5
@@ -103,6 +111,8 @@ numba==0.61.2
     # via
     #   qupath-to-lmd (pyproject.toml)
     #   py-lmd
+    #   pynndescent
+    #   umap-learn
 numpy==2.2.6
     # via
     #   qupath-to-lmd (pyproject.toml)
@@ -117,10 +127,12 @@ numpy==2.2.6
     #   pydeck
     #   pyogrio
     #   scikit-image
+    #   scikit-learn
     #   scipy
     #   shapely
     #   streamlit
     #   tifffile
+    #   umap-learn
 packaging==25.0
     # via
     #   altair
@@ -168,6 +180,8 @@ pygments==2.19.2
     # via
     #   ipython
     #   ipython-pygments-lexers
+pynndescent==0.6.0
+    # via umap-learn
 pyogrio==0.11.1
     # via geopandas
 pyparsing==3.2.3
@@ -199,10 +213,17 @@ scikit-image==0.25.2
     # via
     #   qupath-to-lmd (pyproject.toml)
     #   py-lmd
+scikit-learn==1.9.0
+    # via
+    #   pynndescent
+    #   umap-learn
 scipy==1.16.1
     # via
     #   qupath-to-lmd (pyproject.toml)
+    #   pynndescent
     #   scikit-image
+    #   scikit-learn
+    #   umap-learn
 setuptools==80.9.0
     # via py-lmd
 shapely==2.1.1
@@ -221,6 +242,8 @@ svgelements==1.9.6
     # via py-lmd
 tenacity==9.1.2
     # via streamlit
+threadpoolctl==3.6.0
+    # via scikit-learn
 tifffile==2025.9.9
     # via
     #   qupath-to-lmd (pyproject.toml)
@@ -233,7 +256,9 @@ tornado==6.5.2
     #   jupyter-client
     #   streamlit
 tqdm==4.67.1
-    # via py-lmd
+    # via
+    #   py-lmd
+    #   umap-learn
 traitlets==5.14.3
     # via
     #   ipykernel
@@ -247,6 +272,8 @@ typing-extensions==4.15.0
     #   streamlit
 tzdata==2025.2
     # via pandas
+umap-learn==0.5.12
+    # via qupath-to-lmd (pyproject.toml)
 urllib3==2.5.0
     # via requests
 wcwidth==0.2.13

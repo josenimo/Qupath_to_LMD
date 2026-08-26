@@ -319,25 +319,38 @@ Both workflows expose the same two, in the shared export step.
 - **Smoothing tolerance**, in pixels, default 1.0 — unchanged from what the app has always
   used (`decisions.md` 019). Measured on 900 real shapes: tolerance 0 gives 12 432 vertices,
   1.0 gives 7 938, 5.0 gives 4 586.
-- **Cutting order** (`export.PathOrder`), default `NONE`, so **default output is byte-identical
-  to before** — the golden files confirm it.
-  - `NONE` — the order shapes were loaded in.
-  - `GROUPED` — all of a well's shapes together, wells visited in plate order.
-  - `HILBERT` — grouped, and the path within each well shortened with py-lmd's
-    `tsp_hilbert_solve` at order 7.
-- **The current default is genuinely poor for the instrument**, which is worth knowing:
-  900 shapes across 9 wells needs **759 collector movements** in load order, against 8 when
-  grouped. The XML had 760 contiguous cap runs where 9 would do. Grouping alone lengthens
-  stage travel slightly (392 877 px vs 346 038 px) because it ignores position; hilbert fixes
-  both at once — 213 295 px, 62% of unordered, with 8 movements.
-- Reordering never changes which shape goes to which well; asserted directly.
-- **`tsp_greedy_solve` is unavailable.** It lazily imports `umap` inside
-  `lmd/segmentation.py:120`, and umap-learn is not a py-lmd dependency. Adding it would pull
-  numba and scikit-learn onto a free-tier deployment for a solver that loses to hilbert here,
-  so only hilbert is offered.
-- Hilbert cost and quality by shape count, order 7: 0.06 s at 100, 0.33 s at 900, 0.93 s at
-  2700, 2.70 s at 8000. Lower orders are faster but markedly worse above ~1000 shapes
-  (p=3 gives 13–14% of baseline length, p=7 gives 2–4%). Only runs on a button press.
+- **Cutting order** (`export.PathOrder`), default **`GREEDY`** — the option that minimises
+  stage movement, not the one that preserves historical output (`decisions.md` 047), because
+  stage movement between shapes is a leading cause of cutting misalignment.
+  - `GREEDY` — grouped by well, path within each well shortened with py-lmd's
+    `tsp_greedy_solve` (nearest-neighbour over a k-NN graph). **Default.**
+  - `HILBERT` — grouped, shortened with `tsp_hilbert_solve` at order 7.
+  - `GROUPED` — all of a well's shapes together, wells visited in plate order, no shortening.
+  - `NONE` — the order shapes were loaded in; what the app did before Phase 5.
+- Measured on 900 shapes across 9 wells: load order needs **759 collector movements** and
+  346 038 px of stage travel. Grouping gives 8 movements but *lengthens* travel to 392 877 px
+  because it ignores position within a well. Hilbert gives 213 295 px (62%); greedy gives
+  **197 563 px (57%)** and is faster, which is why it is the default.
+- Reordering is a pure permutation: **coordinates and well assignments are untouched**,
+  asserted directly on both the order array and the XML.
+- Effect on the golden cases when the default changed — cap runs collapse to the number of
+  distinct wells in every case: `annotations` 2 002→1 215 px and 4→1 moves; `cells`
+  30 755→7 815 px and 6→3; `multiclass_cells` 8 984→2 406 px and 11→2. `cells_exploded` is the
+  exception at 30 755→31 066 px: with 124 wells for 128 shapes almost every shape has its own
+  well, so travel is dominated by well order and there is nothing within a well to shorten.
+  Its collector movements still drop 126→123.
+- **`tsp_greedy_solve` needs `umap-learn`**, which it imports lazily at
+  `lmd/segmentation.py:120` and which is *not* a py-lmd dependency — calling it without it
+  raises `ModuleNotFoundError`. It is now a declared dependency; it adds umap-learn,
+  pynndescent, scikit-learn, joblib and threadpoolctl (numba was already required). `k` is
+  clamped to `len(points) - 1` so small wells do not trip pynndescent's `n_neighbors` warning.
+- **Greedy has a numba cold start**: the first call in a process took 14.7 s while numba
+  compiled, then 0.1–0.6 s. It only runs on a button press, and the help text warns about it.
+- Hilbert cost by shape count at order 7: 0.06 s at 100, 0.33 s at 900, 0.93 s at 2 700,
+  2.70 s at 8 000. Lower orders are faster but markedly worse above ~1 000 shapes.
+- Both solvers print progress to stdout and greedy can warn; both are silenced in
+  `_solve_within_well`, and a solver returning anything other than a permutation is logged and
+  ignored rather than allowed to drop or duplicate shapes.
 
 ## Session state keys
 

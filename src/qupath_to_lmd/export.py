@@ -1,5 +1,6 @@
 """Turning a CollectionPlan into the files a scientist downloads."""
 
+import contextlib
 import io
 import json
 import os
@@ -12,7 +13,7 @@ from pathlib import Path
 
 import geopandas
 import numpy
-from lmd.lib import Collection, tsp_hilbert_solve
+from lmd.lib import Collection, tsp_greedy_solve, tsp_hilbert_solve
 from loguru import logger
 
 from qupath_to_lmd.geojson import extract_coordinates, sanitize_for_qupath
@@ -26,17 +27,29 @@ ORIENTATION_TRANSFORM = numpy.array([[1, 0], [0, -1]])
 DEFAULT_SIMPLIFY_TOLERANCE = 1.0
 
 # Order of the Hilbert curve used to shorten the cut path. py-lmd suggests at least 4 for a
-# 1x1 mm area and 7 for a whole slide; 7 gives the shortest paths at every size measured and
-# costs 2.7 s for 8000 shapes, which is fine on a button press.
+# 1x1 mm area and 7 for a whole slide; 7 gave the shortest paths at every size measured.
 HILBERT_ORDER = 7
+
+# Neighbours the greedy solver considers per node. py-lmd defaults to 100; clamped to the
+# number of nodes available so small wells do not trip pynndescent's n_neighbors warning.
+GREEDY_NEIGHBOURS = 100
 
 
 class PathOrder(str, Enum):
-    """The order shapes are written to the XML, which is the order the LMD cuts them."""
+    """The order shapes are written to the XML, which is the order the LMD cuts them.
 
-    NONE = "none"
-    GROUPED = "grouped"
+    Stage movement between shapes is a leading cause of cutting misalignment, so the default
+    is the option that minimises it rather than the one that preserves historical output
+    (`decisions.md` 047).
+    """
+
+    GREEDY = "greedy"
     HILBERT = "hilbert"
+    GROUPED = "grouped"
+    NONE = "none"
+
+
+DEFAULT_PATH_ORDER = PathOrder.GREEDY
 
 
 def order_for_cutting(
@@ -58,15 +71,37 @@ def order_for_cutting(
     order: list[int] = []
     for well in sorted(set(wells), key=lambda name: (name[0], int(name[1:]))):
         positions = numpy.flatnonzero(wells == well)
-        if mode is PathOrder.HILBERT and len(positions) > 2:
+        if mode is not PathOrder.GROUPED and len(positions) > 2:
             subset = selected.iloc[positions]
             centroids = subset.geometry.centroid
             points = numpy.c_[centroids.x.to_numpy(), centroids.y.to_numpy()]
-            within = numpy.asarray(tsp_hilbert_solve(points, p=hilbert_p)).ravel()
-            positions = positions[within]
+            positions = positions[_solve_within_well(points, mode, hilbert_p)]
         order.extend(int(position) for position in positions)
 
     return numpy.array(order)
+
+
+def _solve_within_well(points: numpy.ndarray, mode: PathOrder, hilbert_p: int) -> numpy.ndarray:
+    """Shortest-ish visiting order for one well's shapes, using py-lmd's own solvers.
+
+    Both solvers print progress to stdout and greedy can emit a nearest-neighbour warning, so
+    both are quietened here — the useful numbers are logged by the caller instead.
+    """
+    with contextlib.redirect_stdout(io.StringIO()), warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        if mode is PathOrder.GREEDY:
+            neighbours = max(2, min(GREEDY_NEIGHBOURS, len(points) - 1))
+            solved = tsp_greedy_solve(points, k=neighbours)
+        else:
+            solved = tsp_hilbert_solve(points, p=hilbert_p)
+
+    order = numpy.asarray(solved).ravel()
+    if sorted(order.tolist()) != list(range(len(points))):
+        # Never seen, but a solver returning anything other than a permutation would silently
+        # drop or duplicate shapes, so fall back rather than cut the wrong thing.
+        logger.error(f"{mode.value} solver returned {len(order)} indices for {len(points)} shapes; not reordering")
+        return numpy.arange(len(points))
+    return order
 
 
 def path_stats(selected: geopandas.GeoDataFrame, order: numpy.ndarray) -> tuple[float, int]:
@@ -101,7 +136,7 @@ def build_collection(
     samples_and_wells: dict[str, str],
     simplify_tolerance: float = DEFAULT_SIMPLIFY_TOLERANCE,
     plate: str = "384",
-    path_order: PathOrder = PathOrder.NONE,
+    path_order: PathOrder = DEFAULT_PATH_ORDER,
 ) -> CollectionResult:
     """Build the LMD collection from a plan and render it to XML, CSV and a QC image.
 
@@ -114,8 +149,7 @@ def build_collection(
             by up to this much; larger values mean fewer vertices and faster cutting.
         plate: plate type, for the placement CSV.
         path_order: the order shapes are written in, which is the order the LMD cuts them.
-            Defaults to `NONE`, the order they were loaded in, so output is unchanged unless
-            the user asks for something else.
+            Defaults to `GREEDY`, which minimises stage movement.
     """
     selected = plan.selected
     if selected.empty:

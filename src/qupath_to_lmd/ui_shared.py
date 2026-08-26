@@ -537,9 +537,10 @@ def export_step(settings: dict, build_plan, step: str = "6") -> None:
 
 
 PATH_ORDER_LABELS = {
-    export.PathOrder.NONE: "As loaded — no reordering",
-    export.PathOrder.GROUPED: "Group each well together",
-    export.PathOrder.HILBERT: "Group by well and shorten the path within each (recommended)",
+    export.PathOrder.GREEDY: "Shortest path within each well — nearest-neighbour (recommended)",
+    export.PathOrder.HILBERT: "Shortest path within each well — space-filling curve",
+    export.PathOrder.GROUPED: "Group each well together, no path shortening",
+    export.PathOrder.NONE: "As loaded — no reordering (what this app did before)",
 }
 
 
@@ -567,14 +568,17 @@ def _export_parameters(step: str) -> tuple[float, export.PathOrder]:
     with order_column:
         path_order = st.selectbox(
             "Cutting order",
-            options=list(export.PathOrder),
+            options=list(PATH_ORDER_LABELS),
             format_func=lambda mode: PATH_ORDER_LABELS[mode],
             key=f"path_order_{step}",
             help=(
-                "The order shapes are written in is the order the LMD cuts them. Grouping a "
-                "well's shapes together means the collector moves once per well instead of "
-                "once per shape; shortening the path within each well cuts down how far the "
-                "stage travels. Neither changes which tissue lands in which well."
+                "The order shapes are written in is the order the LMD cuts them, and stage "
+                "movement between shapes is a leading cause of cutting misalignment. Grouping "
+                "a well's shapes together means the collector moves once per well instead of "
+                "once per shape; shortening the path within each well cuts how far the stage "
+                "travels between cuts. None of this changes which tissue lands in which well. "
+                "The first collection of a session may take an extra few seconds while the "
+                "nearest-neighbour solver compiles."
             ),
         )
 
