@@ -92,3 +92,15 @@ machine and 500s in production.
 **Alternatives rejected:** Dropping `requirements.txt` and having the cloud read
 `pyproject.toml` — not reliably supported on the current Community Cloud runtime, and not
 worth risking the deployed app to find out.
+
+## 008 — Rules live in CLAUDE.md; features come before test infrastructure
+**Date:** 2026-08-26 · **Status:** active
+**Decision:** Confirmed by Jose. The working rules stay in `CLAUDE.md` so they auto-load
+into every session rather than needing to be pointed at. And feature development takes
+priority over building test infrastructure: Claude does not propose or add a test suite
+until Jose asks. Reaffirms 006 rather than superseding it.
+**Why:** Auto-loading means the rules apply by default instead of on remembering. On
+testing, the app's value right now is in the features scientists are waiting on; the manual
+UI pass from 002 is the accepted verification in the meantime.
+**Alternatives rejected:** A `rules.md` Claude has to be handed each session — same content,
+worse odds of being read.
