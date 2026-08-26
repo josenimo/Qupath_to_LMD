@@ -550,3 +550,21 @@ Two decimals is enough to distinguish any two shapes anyone cares about.
 150000 — far coarser than intended and a real loss of information on totals. Jose clarified
 he meant decimals. Recorded because the two readings of "fewer sig figs" differ by orders of
 magnitude, and the wrong one silently destroys data in a table people make decisions from.
+
+## 037 — A magnification reference table beside the pixel size input
+**Date:** 2026-08-26 · **Status:** active
+**Decision:** Jose's request. The µm/px step shows a reference table to the right of the
+input: objectives 4×–63× against two representative camera sensor pitches (3.45 and 6.5 µm),
+each cell computed as `pitch / magnification`. A warning next to it states that magnification
+does not determine pixel size.
+**Why:** users often know their objective but not their scale, and would otherwise guess or
+abandon the step. The table is deliberately built from the formula with two pitches rather
+than quoting one "typical" value per magnification, because the whole point is that the same
+20× objective spans 0.173–0.325 µm/px across common cameras — a 1.9× spread visible in the
+table itself. A single authoritative-looking number per magnification would invite exactly
+the mistake the warning is trying to prevent, and would be a claim about instruments we have
+no basis for.
+**Alternatives rejected:** a single "typical µm/px" column — looks authoritative, is wrong
+for most microscopes, and a 2× error in pixel size is a 4× error in every area budget.
+Auto-filling the input from a chosen magnification — 011 and 029 already settled that the
+user enters this value deliberately; prefilling it from a guess undermines that.

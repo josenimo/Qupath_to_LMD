@@ -83,3 +83,22 @@ def for_display(stats: pandas.DataFrame) -> pandas.DataFrame:
     display[area_columns] = display[area_columns].round(DECIMALS)
 
     return display.rename(columns=DISPLAY_COLUMNS)
+
+
+# Pixel size is the camera's sensor pitch divided by the total magnification, so it is a
+# property of the whole optical path, not of the objective. These two pitches bracket most
+# modern scientific cameras and exist to show the user how wide that spread is.
+SENSOR_PITCHES_UM = (3.45, 6.5)
+OBJECTIVES = (4, 10, 20, 40, 63)
+
+
+def reference_pixel_sizes() -> pandas.DataFrame:
+    """Indicative µm/px per objective, for users who know their magnification but not their scale.
+
+    Purely a sanity-check aid. The authoritative value is in QuPath under
+    *Image → Image properties → Pixel width*.
+    """
+    return pandas.DataFrame(
+        {f"{pitch} µm sensor": [round(pitch / mag, 3) for mag in OBJECTIVES] for pitch in SENSOR_PITCHES_UM},
+        index=pandas.Index([f"{mag}×" for mag in OBJECTIVES], name="Objective"),
+    )

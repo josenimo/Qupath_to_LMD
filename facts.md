@@ -189,6 +189,12 @@ categoricals × replicate count, cycling 6 hard-coded colours as Java signed int
   annotations suggests the cell workflow, otherwise annotations. It is a **suggestion** —
   the radio is always user-changeable, and legacy is the default before any file is loaded.
   Verified on both demo files (`Single_cells.geojson` → cells, `TD_01…` → legacy).
+- Beside the µm/px input sits a reference table from `stats.reference_pixel_sizes()`:
+  objectives 4×–63× against two sensor pitches (3.45 and 6.5 µm), each cell being
+  `pitch / magnification`. Its purpose is to make the **spread visible** — the 20× row alone
+  varies 1.9× — because pixel size is a property of the whole optical path, not of the
+  objective. The accompanying warning says so explicitly and points at QuPath's
+  *Image → Image properties → Pixel width* as the real source.
 - `qc.pixel_size_qc` cross-checks the user's µm/px against `sqrt(Cell: Area / polygon area)`
   and warns above 5% disagreement. On `Single_cells.geojson` the implied value is
   0.3467 µm/px with 0.23% spread, so entering 3.467 is flagged as 10.00×. Files without area

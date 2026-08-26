@@ -11,7 +11,7 @@ from pathlib import Path
 import streamlit as st
 from loguru import logger
 
-from qupath_to_lmd import export, extras, geojson, plate, qc
+from qupath_to_lmd import export, extras, geojson, plate, qc, stats
 from qupath_to_lmd.model import CLASS_NAME
 
 # The rendered number input carries `step` as an HTML attribute and browsers snap entries
@@ -230,21 +230,35 @@ def pixel_size_step(step: str = "4") -> float | None:
     #  - step must match the displayed precision. The rendered HTML input carries
     #    step as an attribute and browsers snap off-grid entries to it, so a coarser step
     #    than the format turns a typed 0.3467 into 0.35.
-    entered = st.number_input(
-        "Micrometres per pixel (µm/px)",
-        min_value=PIXEL_SIZE_MIN,
-        max_value=PIXEL_SIZE_MAX,
-        value=None,
-        step=PIXEL_SIZE_STEP,
-        format=PIXEL_SIZE_FORMAT,
-        key="pixel_size_input",
-        placeholder="e.g. 0.3467",
-        help=(
-            f"Accepted to {PIXEL_SIZE_DECIMALS} decimal places, between {PIXEL_SIZE_MIN} and "
-            f"{PIXEL_SIZE_MAX:g} µm/px. Type the value directly — the arrows step by "
-            f"{PIXEL_SIZE_STEP:g}."
-        ),
-    )
+    input_column, reference_column = st.columns([2, 3])
+
+    with input_column:
+        entered = st.number_input(
+            "Micrometres per pixel (µm/px)",
+            min_value=PIXEL_SIZE_MIN,
+            max_value=PIXEL_SIZE_MAX,
+            value=None,
+            step=PIXEL_SIZE_STEP,
+            format=PIXEL_SIZE_FORMAT,
+            key="pixel_size_input",
+            placeholder="e.g. 0.3467",
+            help=(
+                f"Accepted to {PIXEL_SIZE_DECIMALS} decimal places, between {PIXEL_SIZE_MIN} and "
+                f"{PIXEL_SIZE_MAX:g} µm/px. Type the value directly — the arrows step by "
+                f"{PIXEL_SIZE_STEP:g}."
+            ),
+        )
+
+    with reference_column:
+        st.markdown("**If you only know the magnification**")
+        st.dataframe(stats.reference_pixel_sizes(), width="stretch")
+        st.warning(
+            "**Magnification does not tell you the pixel size.** Pixel size is your camera's "
+            "sensor pitch divided by the *total* magnification, so the same 20× objective can "
+            "differ by more than 2× between two microscopes — and any additional coupler or "
+            "zoom changes it again. Treat the table as a rough sanity check only, and get the "
+            "real number from QuPath under *Image → Image properties → Pixel width*."
+        )
 
     if entered is None:
         st.info("Enter the pixel size to continue.")
