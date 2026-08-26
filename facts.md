@@ -47,6 +47,7 @@ src/qupath_to_lmd/
   qc.py                           triangle_qc, validate_saw, pixel_size_qc (report objects)
   stats.py                        class_statistics, for_display, reference_pixel_sizes
   budget.py                       BudgetMode, ClassBudget, feasibility, total_groups
+  selection.py                    SelectionMode, SelectionParams, select, grid_bins
   plot.py                         plot_shapes — class overview, selection preview, QC image
   export.py                       build_collection, build_bundle, ORIENTATION_TRANSFORM
   extras.py                       QuPath classes.json generation
@@ -127,7 +128,8 @@ are shared, then the router dispatches to one of two workflows.
 **Shared:** 1 upload + QC · 2 workflow choice · 3 calibration points.
 **Legacy then continues:** 4 optional class split · 5 plate layout · 6 process and download.
 **Cells then continues:** 4 image scale (optional) · 5 class statistics and selection ·
-6 replicates and budgets · 7 plate and capacity · 8 onwards not built yet.
+6 replicates and budgets · 7 plate and capacity · 8 selection with preview · 9 export.
+Both workflows now reach a downloadable collection.
 
 Step numbers are passed into the `ui_shared` step functions rather than hard-coded, because
 the two workflows reach the shared steps at different points.
@@ -163,6 +165,14 @@ the two workflows reach the shared steps at different points.
    green) and `plate.sample_layout` (classes placed into allowed wells in **sorted** order,
    optionally randomized; returns the classes that did not fit).
    "Confirm and use this plate layout" → `plate.layout_to_saw` → `qc.validate_saw`.
+2.2 **Plate rendering is shared.** `ui_shared.plate_settings_step` is the only place plate
+   options live (type, margin, row/column spacing, randomize) and
+   `ui_shared.plate_preview` is the only plate renderer, so both workflows show the same
+   menu and the same table (`decisions.md` 045). The one remaining difference is
+   deliberate: the annotations workflow keeps its **Confirm** button and custom
+   samples-and-wells upload, because there the user maps classes to wells themselves; the
+   cell workflow derives `class_r<replicate>` groups from the budgets and assigns them
+   automatically, so there is nothing to confirm.
 2.3 **Custom samples-and-wells upload** — overrides the generated layout.
    `plate.parse_saw_file` reads a `.txt`/`.json` containing a **Python dict literal** and
    `ast.literal_eval`s it (trailing commas fine, `//` comments not). Raises
@@ -250,6 +260,57 @@ categoricals × replicate count, cycling 6 hard-coded colours as Java signed int
 - The `st.data_editor` key is an md5 of the sorted class selection plus the mode, so changing
   either gives a fresh editor instead of leaving stale rows behind.
 
+## Selection engine (Phase 4)
+
+- `selection.select(gdf, budgets, budget_mode, params, pixel_size_um)` returns a
+  `SelectionResult`: `replicate_of` (replicate number per shape index, NA for unselected),
+  an `achieved` frame per class and replicate, and `n_blocked_by_adjacency`.
+- **Spread is implemented with a regular grid, not k-means** (`decisions.md` 040). Measured on
+  4214 centroids: k-means costs 0.8 s at k=500 and **14 s at k=2000, 62 s at k=4000**, which
+  is unusable inside a Streamlit rerun; the grid is ~0.03 s at any k and separates better
+  (min pairwise gap 118 px vs 82 at k=100). `grid_bins` binary-searches the cell size until
+  the occupied-cell count lands near the target.
+- **One bin per shape in the whole class budget**, not per replicate (`decisions.md` 042).
+  Every collected shape is then roughly a bin apart, and the shapes are dealt across
+  replicates in a spatially shuffled order. The earlier design binned per replicate and took
+  the *i*-th nearest to each bin centre, which put replicates 1–3 on top of each other:
+  measured, 100% of collected shapes had their nearest collected neighbour in a *different*
+  replicate, with a 12 px minimum gap. Now the median nearest-neighbour distance is 104 px,
+  2.2× better than random, and replicate co-location is gone.
+- **Replicates stay interleaved**: over 6 seeds the spread of replicate centroids is 5.6% of
+  the class extent against a shuffled-label null of 5.8% — statistically indistinguishable
+  from random assignment, which is what "interleaved rather than partitioned" means
+  (`decisions.md` 015).
+- **Filling is round-robin across replicates** as the stream is consumed, which serves both
+  budget modes with one loop. Area budgets land just above target, overshooting under 5%.
+- **Neighbours are judged by distance, not strict intersection** (`decisions.md` 044).
+  QuPath's cell segmentation leaves a **sub-pixel gap** between adjacent cells: on the real
+  8537-cell export the median boundary-to-boundary gap to the nearest neighbour is 0.57 px
+  and only 4% of cells actually touch. So `predicate="intersects"` found 350 pairs where
+  `dwithin` at 1 px finds 26 336, involving 8213 of 8537 shapes. The default
+  `DEFAULT_NEIGHBOUR_DISTANCE_PX` is 1.0 and is user-adjustable; zero reverts to strict
+  intersection and will report almost nothing. Cost 0.09 s at 1 px over 8537 shapes.
+- **Adjacency is a strong preference, not a rule** (`decisions.md` 042). Conflicting
+  candidates are deferred and used only once the non-conflicting ones run out, because a dense
+  class cannot always fill a large budget without touching and under-delivering silently
+  would be worse. The count of collected shapes touching another collected shape is **always
+  reported**, per replicate, whether or not the preference is on — so the adjacency graph is
+  built every time (0.04 s over 8537 shapes; that file has 350 touching pairs among 287 shapes).
+- Adjacency spans replicates: the laser cuts a shared boundary regardless of which well
+  either cell goes to. Verified on a 20-square touching chain whose largest non-touching set
+  is 10: asking for 10 gives 0 conflicts, asking for 12 still delivers 12 and reports 8.
+  On the real export, 900 of 3193 Tumor cells selects with 0 conflicts; 2700 of 3193 reports
+  2206, which is genuinely unavoidable at 85% of a dense class.
+- **Seed is exposed and recorded** in `provenance.json`, so a selection can be reported in a
+  methods section and reproduced.
+- **The well assignment is computed at the plate step, before the selection runs**
+  (`decisions.md` 045). `budget.group_keys` derives the `class_r<replicate>` groups from the
+  budgets alone, and `plate.assign_wells` maps them to wells — sorted, so the same plan always
+  lands the same way, and seeded when randomized so a shuffled layout is still reproducible.
+  `model.plan_from_selection` then takes that approved mapping rather than recomputing it, so
+  a replicate that ends up with no shapes keeps its well instead of quietly vanishing.
+  Groups beyond the available wells are reported, never silently dropped.
+
 ## Session state keys
 
 Initialised in the block at the top of `streamlit_app.py`. Any new key belongs here too.
@@ -336,9 +397,6 @@ Still open:
   (`st.caption`, not a warning) when they are not. Do not build anything that depends on
   measurements being there.
 
-- **`randomize` has no seed.** `plate.sample_layout` calls `random.sample` unseeded, so a
-  randomized layout cannot be reproduced or reported in a methods section. Phase 4
-  introduces seeds for the selection engine; this should join them.
 - **`py-lmd` accepts a degenerate calibration triangle silently.** Given three identical or
   collinear calibration points it writes a normal-looking XML with no error and no NaN, so
   the file looks fine and cuts in the wrong place. The app blocks this itself

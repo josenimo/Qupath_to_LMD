@@ -2,7 +2,7 @@
 
 import ast
 import string
-from random import sample
+from random import Random
 
 import pandas
 from loguru import logger
@@ -58,11 +58,31 @@ def default_layout(plate: str = "384") -> pandas.DataFrame:
     )
 
 
+def assign_wells(
+    groups: list[str],
+    wells: list[str],
+    randomize: bool = False,
+    seed: int = 0,
+) -> dict[str, str]:
+    """Map each group to a well, in sorted order so the same plan always lands the same way.
+
+    Randomizing spreads groups over the plate, which guards against a systematic
+    position effect being read as a biological one. It is seeded, so a randomized layout is
+    still reproducible and can be reported.
+    """
+    ordered = sorted(groups)
+    available = list(wells)
+    if randomize:
+        available = Random(seed).sample(available, len(available))
+    return dict(zip(ordered, available, strict=False))
+
+
 def sample_layout(
     classes: list[str],
     plate: str = "384",
     wells: list[str] | None = None,
     randomize: bool = False,
+    seed: int = 0,
 ) -> tuple[pandas.DataFrame, list[str]]:
     """Place classes into the usable wells, in order, one class per well.
 
@@ -75,8 +95,8 @@ def sample_layout(
     # Sorted, so the same file laid out twice gives the same plate.
     ordered_classes = sorted(classes)
     if randomize:
-        logger.info("Randomizing well order")
-        wells = sample(wells, len(wells))
+        logger.info(f"Randomizing well order with seed {seed}")
+        wells = Random(seed).sample(wells, len(wells))
 
     unplaced = ordered_classes[len(wells) :]
     if unplaced:

@@ -604,3 +604,128 @@ selection changes.
 one plan is harder to reason about than it is useful; revisit if asked. Blocking on
 infeasible budgets — 003, and a partly-filled replicate is sometimes exactly what the user
 wants.
+
+## 040 — Spread uses a regular grid, not k-means
+**Date:** 2026-08-26 · **Status:** active · **supersedes the implementation in 016**
+**Decision:** Spatial spread is implemented by binning centroids on a regular grid whose cell
+size is binary-searched so the occupied-cell count lands near the number of shapes wanted,
+then taking the shape nearest each bin centre. 016's intent — spread by default, replicates
+interleaved via bin offsets — is unchanged; k-means is replaced.
+**Why:** measured on 4214 real centroids, `scipy.cluster.vq.kmeans2` costs 0.03 s at k=100,
+0.8 s at k=500, **14 s at k=2000 and 62 s at k=4000**. Streamlit reruns the whole script on
+every widget change, so a user asking for 2000 cells per replicate would wait 14 s per
+keystroke. The grid is ~0.03 s at any k *and* separates better: min pairwise gap 118 px
+against k-means' 82 px at k=100.
+**Trade-off, measured and accepted:** the grid is more edge-biased than k-means at small k —
+mean distance from the tissue edge 328 px against k-means' 396 px, with a population mean of
+450 px. Some of that is inherent to any spatially uniform sample of an interior-dense
+population, and the honest answer for a user who wants population-proportional sampling is
+the random mode, which is offered alongside and is unbiased by construction (depth 454 px).
+Documenting both is better than pretending one mode dominates.
+**Alternatives rejected:** k-means (above). A Hilbert-curve stride — comparable spread and
+speed, but "we lay a grid over the tissue and take one shape per square" is explainable to a
+user in a sentence, and this app's warnings and choices have to be legible to be useful.
+
+## 041 — Phase 4 delivered: selection engine, preview, and a complete cell workflow
+**Date:** 2026-08-26 · **Status:** active
+**Decision:** `selection.py` chooses shapes; `model.plan_from_selection` turns the result into
+a `CollectionPlan` with one well per `class_r<replicate>` group; step 8 shows the selection
+parameters, the achieved-versus-requested table and a preview coloured by replicate, then
+hands off to the existing shared export step. The cell workflow now produces a downloadable
+collection.
+**Why:** `ROADMAP.md` Phase 4. The preview is the point (017): a user can see clumping, a
+starved replicate or edge bias immediately rather than inferring it from numbers.
+**Details worth keeping:** filling is round-robin across bins until the budget is met, which
+serves count and area budgets with one loop instead of two code paths. Adjacency is enforced
+**globally** rather than per replicate, because the laser cuts a shared boundary regardless of
+which well each cell goes to. Unselected shapes stay in the plan as `skipped` so the app can
+say what it left out. The preview colours by replicate and merges classes, since the question
+at that step is whether the replicates are spread and comparable — the class overview in step
+5 already answered the other question.
+**Verified end to end on the real 8537-shape export:** 19 checks including exact count
+budgets, zero touching pairs under the adjacency constraint with a control proving touching
+pairs occur without it, area budgets overshooting under 5%, seed determinism, and a real XML
+build of 900 shapes and 7863 vertices.
+
+## 042 — Bins size the whole class budget, and adjacency is a preference
+**Date:** 2026-08-26 · **Status:** active · **supersedes the replicate scheme in 015/016/040**
+**Decision:** Jose's review of Phase 4. Three changes.
+1. The grid is sized to **one bin per shape in the whole class budget**, not per replicate,
+   and one shape is taken per bin. Replicates are then dealt from that spread set in a
+   spatially shuffled order.
+2. The adjacency setting is a **strong preference, not an obligation**. Conflicting
+   candidates are deferred and used only when the non-conflicting ones run out.
+3. The number of collected shapes touching another collected shape is **always reported**, per
+   replicate, whether or not the preference is on.
+**Why:** the previous scheme binned per replicate and gave replicate *i* the *i*-th nearest
+shape to each bin centre. That is co-location, not interleaving: measured on the real export,
+**100% of collected shapes had their nearest collected neighbour in a different replicate**,
+with a 12 px minimum gap. Jose spotted it in the preview. Sizing bins to the whole budget
+fixes it at the root — median nearest-neighbour distance is now 104 px, 2.2× better than
+random — while replicates stay interleaved (centroid spread 5.6% of extent against a
+shuffled-label null of 5.8%, i.e. indistinguishable from random assignment).
+On adjacency: in dense tissue a large budget cannot always be filled without touching, and
+silently under-delivering is worse than touching — the user asked for an amount. So the
+constraint relaxes and reports instead. Reporting unconditionally matters because a user who
+leaves the preference off still needs to know how much of their collection shares boundaries.
+**On the graph question:** the touching graph *is* what drives this — `shapely.STRtree` with
+an `intersects` predicate, consulted per candidate. What is deliberately not done is solving
+for a maximum independent set: that is NP-hard, and greedy rejection over a spread-ordered
+stream already reaches zero conflicts whenever the budget admits one, verified on a chain
+graph where the optimum is known exactly.
+**Verified:** 22 checks, including a 20-square touching chain with a known optimum of 10 —
+asking for 10 yields 0 conflicts, asking for 12 still delivers 12 and reports 8 conflicts.
+
+## 043 — The cell workflow shows the plate layout
+**Date:** 2026-08-26 · **Status:** active
+**Decision:** `ui_shared.plate_preview` renders the plate as a table with each group in its
+well, plus a download of the samples-and-wells scheme. The cell workflow calls it after well
+assignment; it replaces the raw dictionary in an expander.
+**Why:** Jose noticed the plate view present in the annotations workflow was missing from the
+cell workflow — an oversight in Phase 3/4, not a decision. The plate is how a user checks the
+layout against what they will physically handle, so a dictionary dump is not a substitute.
+
+## 044 — Neighbours are shapes within a distance, not shapes that intersect
+**Date:** 2026-08-26 · **Status:** active · **supersedes the intersects test in 013/042**
+**Decision:** Adjacency uses `shapely.STRtree.query(..., predicate="dwithin", distance=d)`
+with a user-adjustable `d`, defaulting to 1 pixel, rather than a strict `intersects` test.
+Zero reverts to strict intersection.
+**Why:** Jose reported that no shapes were being counted as touching while the preview
+clearly showed many adjacent ones. Not a counting bug — the wrong predicate for the physical
+question. **QuPath's cell segmentation leaves a sub-pixel gap between adjacent cells**:
+measured on the real 8537-cell export, the median boundary-to-boundary gap to the nearest
+neighbour is 0.57 px (p95 0.87 px) and only 4% of cells actually intersect. So `intersects`
+found 350 pairs where a 1 px tolerance finds 26 336, involving 8213 of the 8537 shapes. Cells
+that are adjacent in every sense that matters for cutting were invisible to the check, which
+made both the constraint and its report meaningless.
+**Why exposed rather than fixed:** the right tolerance depends on the segmentation and on how
+much boundary sharing the user will accept, and it is cheap to explain — "shapes closer than
+this count as neighbours". The µm equivalent is shown when the image scale is known. This
+follows 019: expose the number, explain it, let the user decide.
+**Verified:** at 1 px, 900 of 3193 Tumor cells selects with 0 conflicts while 2700 of 3193
+reports 2206 — unavoidable at 85% of a dense class, and now visible instead of hidden.
+Cost 0.09 s over 8537 shapes.
+
+## 045 — One plate menu and one plate renderer for both workflows
+**Date:** 2026-08-26 · **Status:** active
+**Decision:** Jose's request. `ui_shared.plate_settings_step` is the only place plate options
+live — type, margin, row spacing, column spacing, randomize — and `ui_shared.plate_preview` is
+the only plate renderer. Both workflows use both. The randomize toggle moves out of the
+annotations-only layout step into the shared options. The cell workflow shows its plate
+**directly under the plate options**, because the well assignment depends only on the budgets
+(`budget.group_keys`), not on which shapes the selection picks.
+**Why:** the two workflows had drifted — the cell workflow had a duplicate step heading, no
+randomize toggle, and showed its plate at the end of the *next* step. None of that was
+intended; it accumulated across Phases 3 and 4. A user should not have to learn two plate
+interfaces because of an implementation detail.
+**The one difference kept, and why:** the annotations workflow retains its **Confirm** button
+and custom samples-and-wells upload. There the user maps classes to wells themselves, and the
+upload is an established escape hatch for schemes the plate builder cannot express. The cell
+workflow derives `class_r<replicate>` groups from the budgets and assigns them automatically,
+so there is nothing to confirm and nothing the builder cannot express. If a cell-workflow user
+ever needs to hand-place groups, the upload path should be added there too rather than the
+confirm gate.
+**Also:** `plate.assign_wells` is seeded, so a randomized layout is reproducible — closing the
+unseeded-randomize gap that had been recorded as a known quirk. `plan_from_selection` now
+accepts the assignment already shown to the user, so a replicate that ends up with no shapes
+keeps its well rather than quietly disappearing from the plate.

@@ -98,6 +98,19 @@ def feasibility(
     return table
 
 
+def group_keys(budgets: list[ClassBudget]) -> list[str]:
+    """The `class_r<replicate>` key of every group the plan will produce.
+
+    Depends only on the budgets, not on which shapes end up selected, so the plate layout can
+    be shown before the selection runs.
+    """
+    return [
+        f"{item.class_name}_r{replicate}"
+        for item in budgets
+        for replicate in range(1, item.replicates + 1)
+    ]
+
+
 def total_groups(budgets: list[ClassBudget]) -> int:
     """One well per replicate per class, so this is how many wells the plan needs."""
     return sum(item.replicates for item in budgets)
