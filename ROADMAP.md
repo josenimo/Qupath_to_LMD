@@ -129,6 +129,10 @@ Per class, shown as a table before anything is selected:
 
 Then a multi-select of classes to include. Everything after this operates on that subset.
 
+A first version of the Phase 4 preview belongs here too: all shapes drawn, coloured by
+class, so the user can see what they are including before they think about budgets. Same
+plotting function, one layer instead of two.
+
 ### Phase 3 — Replicates and budgets
 
 - Per included class: number of replicates.
@@ -144,38 +148,71 @@ Then a multi-select of classes to include. Everything after this operates on tha
 
 The scientific core. Given a class, a budget, and constraints, choose cells.
 
-- **Default mode: maximum spatial spread** (`decisions.md` 012). Greedy
-  farthest-point sampling — seed a cell, then repeatedly take the candidate furthest from
-  everything already chosen, until the budget is met. Rationale: a replicate drawn from one
-  corner of the tissue measures that corner, not the class. Spreading averages over local
-  gradients, staining artefacts and niche effects.
-- **Random mode** as the alternative, for users who want an unbiased draw.
+**Default mode: spatial binning** (`decisions.md` 016). Cluster the class's cell centroids
+into *k* spatial bins (k-means), then take the cell nearest each bin centre. Rationale for
+spreading at all: a replicate drawn from one corner of the tissue measures that corner, not
+the class — spreading averages over local gradients, staining artefacts and niche effects.
+
+Rationale for *binning* specifically, rather than the greedy farthest-point sampling this
+roadmap originally proposed: farthest-point maximises separation by racing to the extremes,
+so it **over-samples the tissue boundary**. Measured on the 121 cells of
+`Single_cells.geojson`, selecting 20 (`decisions.md` 016 records the prototype):
+
+| mode | min pairwise gap | mean distance from tissue edge |
+| --- | --- | --- |
+| random | 26 px | 80 px |
+| farthest-point | **101 px** | 67 px — *biased to the rim* |
+| spatial binning | 33 px | 72 px |
+| *(all 121 cells)* | — | 78 px |
+
+Farthest-point wins on separation and loses on representativeness. Binning keeps most of
+the separation with near-population-average tissue depth, and covers the tissue visibly
+more evenly.
+
+- **Replicates fall out of the same structure.** For *r* replicates of *k* cells: bin once
+  into *k* bins, and give replicate *i* the *i*-th nearest cell to each bin centre. Every
+  replicate then spans the whole tissue, replicates are structurally comparable, sizes are
+  equal and membership cannot overlap. Verified on the demo file: 3 replicates × 12 bins →
+  sizes 12/12/12, overlap 0. This is the spread-and-interleaved behaviour Jose confirmed
+  (`decisions.md` 015), obtained by construction rather than by a second algorithm.
+- **Random mode** as the alternative, for users who want a straightforwardly unbiased draw.
 - **Adjacency constraint** (`decisions.md` 013): when adjacent cells are not allowed, no
   two selected cells may touch or overlap, evaluated on the **pre-smoothing, pre-dilation
-  QuPath geometry**. Built as a neighbour graph with `shapely.STRtree`, then respected as a
-  hard constraint during selection. Spread sampling and the constraint reinforce each other,
-  so the constrained case is not a separate algorithm.
-- **Replicates within a class** are drawn to be mutually comparable — each replicate spread
-  across the class's full extent, interleaved with the others, rather than each replicate
-  taking one spatial block. *Assumption, flagged for confirmation when we build it:* it
-  makes replicates statistical repeats rather than regional samples, which is what
-  replicates usually mean. Partitioning is the alternative if regional comparison is the goal.
+  QuPath geometry**, via a `shapely.STRtree` neighbour graph. It composes cleanly with
+  binning — if a bin's nearest candidate touches something already selected, take that bin's
+  next-nearest. Note binning alone does *not* guarantee non-adjacency (min gap 33 px above),
+  so the constraint does real work and is not redundant.
+- **Area budgets need an iteration.** *k* is known upfront only when the budget is a cell
+  count. For an area target, estimate *k* from the class's median cell area, then add or
+  drop bins until the achieved area brackets the target — and report what was achieved.
 - **Seed exposed and recorded** in the provenance record, so a selection can be reproduced
   and reported in a methods section.
 - Report achieved vs requested cells and area per replicate.
+
+**Live preview** (`decisions.md` 017). The selection is drawn as it is configured:
+unselected shapes in grey, selected shapes coloured by replicate, calibration triangle
+overlaid. This is the feature that makes the parameters above usable — a user can see
+clumping, edge bias or a starved replicate immediately instead of inferring it from
+numbers. Measured cost of a two-layer geopandas/matplotlib render: ~0.35 s at 10k shapes,
+1.8 s at 50k, 7.6 s at 200k; falling back to centroid scatter above a threshold is 0.14 s
+at 200k. Cheap enough to redraw on every widget change for realistic files, so no
+interactive plotting library is needed. The same function should produce the export QC
+image, replacing the separate `py-lmd` plot — one picture, drawn one way, before and after.
 
 ### Phase 5 — Export parameters
 
 Two parameters exposed with recommended defaults and an on-screen explanation of each
 (`decisions.md` 010):
 
-- **Smoothing / simplification tolerance.** Currently hard-coded `simplify(1)` — one
-  *pixel*, which means the effective tolerance silently changes with objective
-  magnification. Express it in **µm** instead. The reasoning to put on screen: tolerance
-  should sit below the cutting laser's positioning precision, so simplification removes
-  vertices that only slow the stage down without changing which tissue gets cut. Default
-  in the sub-µm range; *Jose to confirm the LMD7's practical precision figure so the
-  recommendation is grounded in the instrument rather than in the current pixel accident.*
+- **Smoothing / simplification tolerance.** Currently hard-coded `simplify(1)`: shapely
+  Douglas-Peucker with a tolerance of one *pixel*, meaning "the outline may move by up to
+  1 px". Because it is in pixels, the physical size of that licence changes with the
+  objective — 0.35 µm on the demo file at 0.347 µm/px, but ~1.7 µm on a 4× overview.
+  Same code, same number, 5× different effect on the tissue. So: express it in **µm**
+  (`decisions.md` 018), default 0.5 µm, with the tolerance shown as a fraction of the
+  median shape diameter and a **warning when it exceeds ~2%** of it. That makes the
+  parameter self-calibrating — safe on mini-bulk annotations, loud on single cells, without
+  needing an instrument spec sheet.
 - **Cut-path optimization.** `none` / `greedy` / `hilbert`, ordering shapes to cut down
   stage travel and keep focus stable. py-lmd already ships `tsp_greedy_solve` and
   `tsp_hilbert_solve` and both are importable from `lmd.lib`, but its `Collection` path —
@@ -208,9 +245,12 @@ Suggested order: **0 → 1 → 2 → 3 → 4 → 5 → 6**, with 5 promoted on r
 
 Not blocking, but they will need answers as the phases land.
 
-1. **LMD7 positioning precision**, for the smoothing default (Phase 5).
-2. **Replicate spatial strategy** — interleaved spread, as assumed in Phase 4, or spatial
-   partitioning?
+1. **LMD7 positioning precision** — *no longer blocking.* The smoothing default is now
+   anchored to shape size instead (`decisions.md` 018). Still worth knowing: if the
+   instrument's real precision is coarser than 0.5 µm, the default can be relaxed and
+   cutting gets faster for free.
+2. ~~Replicate spatial strategy~~ — **settled**: spread and interleaved
+   (`decisions.md` 015), obtained structurally by the binning scheme in Phase 4.
 3. **Is a dilation step coming?** Defining adjacency as "pre-dilation" implies one may be.
    If shapes are ever grown outward, dilated neighbours can overlap even with the adjacency
    constraint on — that would need saying on screen when it happens.

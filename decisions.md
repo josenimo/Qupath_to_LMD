@@ -195,3 +195,68 @@ It is also the only check that would catch a silent change to the Y-flip, calibr
 ordering or simplification.
 **Alternatives rejected:** Relying on the manual UI pass alone — a human clicking through
 the app cannot see that a coordinate shifted by a pixel.
+
+## 015 — Replicates are spread and interleaved
+**Date:** 2026-08-26 · **Status:** active
+**Decision:** Confirmed by Jose. Replicates of a class each span the class's full spatial
+extent and interleave with one another. The class is **not** partitioned into one spatial
+block per replicate.
+**Why:** It makes replicates statistical repeats of the same population rather than samples
+of different regions, which is what a replicate is normally taken to mean. Regional
+comparison remains expressible by the user as separate classes in QuPath.
+**Alternatives rejected:** Spatial partitioning — appropriate if the question is regional
+variation, but the wrong default and it silently confounds replicate with location.
+
+## 016 — Spatial binning, not farthest-point, is the default selection algorithm
+**Date:** 2026-08-26 · **Status:** active · **supersedes the algorithm named in 012**
+**Decision:** The spread default is implemented as k-means spatial binning of cell
+centroids, taking the cell nearest each bin centre; for *r* replicates, replicate *i* takes
+the *i*-th nearest cell in each bin. 012's intent (spread by default) stands; its named
+implementation (greedy farthest-point sampling) is replaced.
+**Why:** Prototyped both on the 121 cells of `Single_cells.geojson`, selecting 20.
+Farthest-point gave the best separation (min pairwise gap 101 px vs 26 px random) but
+**biased selection to the tissue rim** — mean distance from the tissue edge 67 px against a
+population mean of 78 px — because maximising separation means racing to the extremes. That
+is a representativeness bug in a feature whose entire purpose is representativeness.
+Binning gave min gap 33 px at depth 72 px: most of the separation, near-population-average
+depth, visibly even coverage. It also produces 015's interleaved replicates by construction
+(verified: 3 replicates × 12 bins → 12/12/12, zero overlap) instead of needing a second
+mechanism.
+**Alternatives rejected:** Farthest-point (edge bias, above). Random as default (unbiased
+depth, but clumps — min gap 26 px, with visibly touching pairs among the 20 selected).
+**Consequence:** binning does not by itself guarantee non-adjacency, so 013's constraint is
+load-bearing and applies on top: if a bin's nearest candidate touches an already-selected
+shape, take that bin's next-nearest.
+
+## 017 — Live selection preview
+**Date:** 2026-08-26 · **Status:** active
+**Decision:** Jose's idea, adopted. The cell workflow draws the shapes as parameters are
+set — unselected in grey, selected coloured by replicate, calibration triangle overlaid —
+using a static matplotlib/geopandas render redrawn on each change. One plotting function
+serves the Phase 2 class view, the Phase 4 selection preview and the export QC image,
+replacing the separate `py-lmd` plot. Above a shape-count threshold it falls back to
+plotting centroids instead of polygons. No interactive plotting library.
+**Why:** It is the difference between choosing selection parameters and guessing at them,
+and it is the most direct expression of the transparency goal in 003 — clumping, edge bias
+or a starved replicate become visible rather than inferred. Jose asked not to do it if it
+got complicated; measured, it does not: a two-layer render is ~0.35 s at 10k shapes, 1.8 s
+at 50k, 7.6 s at 200k, and the centroid fallback is 0.14 s at 200k. Streamlit already
+reruns on every widget change, so redraw-on-change needs no extra machinery.
+**Alternatives rejected:** Interactive pan/zoom via plotly or pydeck — genuinely nicer, but
+a new dependency plus browser memory risk on Community Cloud, for a benefit the static
+render mostly already delivers. Revisit if users ask to zoom.
+
+## 018 — Smoothing tolerance in µm, warned against shape size
+**Date:** 2026-08-26 · **Status:** active · refines 010
+**Decision:** Smoothing tolerance is specified in µm with a default of 0.5 µm, displayed as
+a percentage of the median shape diameter, and warns when it exceeds roughly 2% of that.
+No instrument-precision figure is required.
+**Why:** 010 anchored the default to the cutting laser's precision, which needs a number
+nobody had to hand. Anchoring to shape size instead is self-calibrating and better
+targeted: the same 0.5 µm is negligible on a 200 µm mini-bulk annotation and material on a
+10 µm cell, and the warning fires exactly in the case that matters. The underlying problem
+010 identified is unchanged — `simplify(1)` is one *pixel*, so its physical effect scales
+with magnification (0.35 µm at 0.347 µm/px, ~1.7 µm on a 4× overview) and the number
+therefore means nothing physical on its own.
+**Alternatives rejected:** Blocking on the LMD7 spec figure — would stall Phase 5 on a
+detail the shape-relative warning handles better anyway.
