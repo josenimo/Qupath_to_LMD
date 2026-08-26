@@ -478,3 +478,37 @@ unreachable while a file without calibration points is loaded. Removing the file
 it. Worth revisiting by moving Extras above the workflow if anyone is bitten.
 **Verified:** six cases — zero, one and two calibration points, three identical, three
 collinear, and three valid — with only the valid case proceeding.
+
+## 032 — Phase 2 delivered: per-class statistics and a class overview
+**Date:** 2026-08-26 · **Status:** active
+**Decision:** `stats.py` computes per-class shape counts, areas (total, median, quartiles,
+min, max), convex-hull spread and density; `plot.py` draws the shapes with the chosen
+classes coloured and the rest grey. The cell workflow shows the table, an optional
+area-floor count, a class multiselect defaulting to everything, and the overview figure.
+**Why:** `ROADMAP.md` Phase 2 — a user cannot sensibly choose budgets without seeing what
+each class actually holds. Confirms 029 in practice: areas derived from geometry × µm/px
+match QuPath's own `Cell: Area` to a median ratio of 0.9998 over 121 cells, so nothing
+depends on measurements being exported.
+**Details worth keeping:** the area floor **counts** small shapes rather than removing them,
+because a threshold for "too small to be worth collecting" is the scientist's judgement, not
+ours (003). Density uses the hull of centroids rather than of full geometries — far cheaper,
+and it degrades to `NaN` instead of infinity for classes with fewer than three shapes.
+Excluded classes are drawn grey rather than hidden, so what is being left out stays visible.
+**Alternatives rejected:** filtering by the area floor automatically — silently drops data
+the user classified deliberately. Hiding excluded classes — makes an exclusion invisible at
+exactly the moment it matters.
+
+## 033 — Plotting uses Figure, not pyplot, and Okabe-Ito colours
+**Date:** 2026-08-26 · **Status:** active
+**Decision:** `plot.py` constructs `matplotlib.figure.Figure` objects directly and never
+imports `pyplot`. Qualitative colours come from the Okabe-Ito palette, assigned by sorted
+class name. Above 20 000 shapes, one dot is drawn per shape instead of its outline.
+**Why:** pyplot keeps every figure in a global registry, and Streamlit reruns the whole
+script on every widget change, so a pyplot-based preview would leak figures for the lifetime
+of the session — on a free-tier deployment with a memory ceiling that matters. Okabe-Ito
+stays distinguishable under the common forms of colour blindness, which a diagnostic picture
+of which tissue gets cut ought to be. Sorting the assignment means a class does not change
+colour when the selection changes. The dot fallback is measured, not guessed: polygon
+rendering is ~1.8 s at 50 000 shapes and ~7.6 s at 200 000, against 0.14 s for centroids.
+**Alternatives rejected:** an interactive plotting library (see 017) — still deferred.
+Matplotlib's default tab10 — not colourblind-safe.
