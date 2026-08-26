@@ -80,19 +80,36 @@ what will happen legible, then let them decide.
 
 ## 5. Where code goes
 
-- `streamlit_app.py` — UI, layout, `st.session_state` wiring, control flow. Thin.
-- `src/qupath_to_lmd/core.py` — the pipeline steps: load/QC geojson, QC calibration,
-  QC samples-and-wells, split classes, build the collection.
-- `src/qupath_to_lmd/utils.py` — pure-ish helpers: plates, wells, dataframes, parsing,
-  geometry extraction, sanitising.
-- New logic goes in `core.py`/`utils.py` with a signature that takes its inputs as
-  arguments; `streamlit_app.py` calls it. I do not grow `streamlit_app.py` with
-  computation that could be tested outside Streamlit.
-- Reaching into `st.session_state` from inside `core`/`utils` is an existing pattern, not
-  a good one. New functions take explicit parameters and return values. I do not add new
-  hidden `st.session_state` reads/writes in the library layer.
-- Every new `st.session_state` key is initialised in the block at the top of
+There are two layers, and the boundary is the point of the whole structure.
+
+**Library layer** — pure, no Streamlit. Takes explicit arguments, returns values or report
+objects, raises domain exceptions. This is the layer that can be exercised outside the app.
+
+- `model.py` — `CollectionPlan`, canonical column names, provenance
+- `geojson.py` — reading, QC, explode, measurements, sanitising for QuPath
+- `plate.py` — plate geometry, wells, layouts, samples-and-wells parsing
+- `qc.py` — checks that return reports (`TriangleReport`, `SawReport`, `PixelSizeReport`)
+- `export.py` — collection building, XML, the download bundle
+- `extras.py` — QuPath `classes.json` generation
+
+**UI layer** — Streamlit. May read and write `st.session_state`; that is its job.
+
+- `streamlit_app.py` — session init, logging, and the router. Stays thin.
+- `ui_shared.py` — steps both workflows use (upload, workflow choice, calibration, image
+  scale, plate settings and layout, export, extras)
+- `ui_legacy.py` / `ui_cells.py` — the two workflows
+
+Rules that follow from that split:
+
+- New computation goes in the library layer, never in a `ui_*` module and never in
+  `streamlit_app.py`. If I cannot call it from a plain script, it is in the wrong place.
+- Library functions never touch `st.*` or `st.session_state`. No exceptions — a report
+  object or an exception is always the answer.
+- A `ui_*` function renders one step and returns what the next step needs.
+- Every new `st.session_state` key is initialised in `DEFAULTS` at the top of
   `streamlit_app.py` and added to the key table in `facts.md`.
+- The legacy workflow is **frozen**: later phases must not change what it produces, and
+  `tools/golden_harness.py` is what enforces that.
 
 ## 6. Verification
 

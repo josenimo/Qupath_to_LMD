@@ -5,6 +5,7 @@ how to present them and so they can be exercised outside Streamlit.
 """
 
 import ast
+import json
 from dataclasses import dataclass, field
 
 import geopandas
@@ -172,3 +173,41 @@ def sanitize_for_qupath(gdf: geopandas.GeoDataFrame) -> geopandas.GeoDataFrame:
         raise GeojsonError(f"Cannot write a QuPath-compatible GeoJSON, missing columns: {missing}")
 
     return gdf[required]
+
+
+def measurements_frame(gdf: geopandas.GeoDataFrame) -> pandas.DataFrame:
+    """Explode QuPath's `measurements` JSON into a DataFrame, one column per measurement.
+
+    Only cells and detections carry measurements; annotation-only files give an empty frame.
+    The index matches `gdf`, so the result can be joined straight back on.
+    """
+    if "measurements" not in gdf.columns:
+        return pandas.DataFrame(index=gdf.index)
+
+    parsed = {}
+    for index, raw in gdf["measurements"].items():
+        if isinstance(raw, str) and raw.strip():
+            try:
+                parsed[index] = json.loads(raw)
+            except json.JSONDecodeError:
+                logger.debug(f"Could not parse measurements for {index}")
+        elif isinstance(raw, dict):
+            parsed[index] = raw
+
+    frame = pandas.DataFrame.from_dict(parsed, orient="index")
+    logger.info(f"Parsed measurements for {len(frame)} of {len(gdf)} objects, {frame.shape[1]} fields")
+    return frame.reindex(gdf.index)
+
+
+def area_measurement_column(measurements: pandas.DataFrame) -> str | None:
+    """Find the column holding QuPath's object area, which it reports in µm².
+
+    `Cell: Area` is what cell segmentation writes; fall back to any other area field so
+    detections and custom pipelines still work.
+    """
+    if measurements.empty:
+        return None
+    if "Cell: Area" in measurements.columns:
+        return "Cell: Area"
+    candidates = [c for c in measurements.columns if c.strip().endswith("Area")]
+    return candidates[0] if candidates else None

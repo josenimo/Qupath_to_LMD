@@ -328,3 +328,41 @@ harness is a script, and it can be moved under pytest later if a suite ever arri
 **Known gaps, recorded rather than papered over:** no LineString case (no demo file has
 one), nothing covering the UI or the QC/warning behaviour, and it proves "unchanged" rather
 than "correct" — a pre-existing coordinate bug is faithfully preserved.
+
+## 023 — Phase 1 delivered: router, shared steps, and the image-scale input
+**Date:** 2026-08-26 · **Status:** active
+**Decision:** `streamlit_app.py` becomes session init plus a router. Steps 1–3 (upload,
+workflow choice, calibration) are shared; the router then dispatches to `ui_legacy.render`
+or `ui_cells.render`. The `ui_*` modules are the UI layer and may own `st.session_state`;
+the library modules stay pure. `CLAUDE.md` rule 5 is rewritten around that boundary,
+replacing its stale references to `core.py` and `utils.py`.
+**Why:** `ROADMAP.md` Phase 1. The legacy workflow keeps its order and wording so existing
+users are not disoriented, while the second workflow gets somewhere to live.
+**Verified:** golden harness clean — all 8 artefacts identical, so the legacy path is
+untouched and now frozen. Router detection exercised against both demo files with stubbed
+widgets: `Single_cells.geojson` (121 cells vs 7 annotations) defaults to cells,
+`TD_01_verysmall_mIF.geojson` to legacy, no file to legacy with no hint.
+
+## 024 — Step numbers are parameters, not literals
+**Date:** 2026-08-26 · **Status:** active
+**Decision:** The `ui_shared` step functions take a `step` label used in their heading,
+rather than hard-coding "Step 2". The workflows pass their own numbers.
+**Why:** The two workflows reach the shared steps at different points, so a literal is
+wrong for one of them. The first attempt used "Step 1.5" and "Step 1.6" to avoid
+renumbering, which read worse than simply renumbering: the flow is now 1–6 in both
+workflows. Renumbering does shift what "Step 2" means for returning users, which is the
+cost accepted here.
+**Alternatives rejected:** Hard-coding numbers per workflow by duplicating the headings —
+two places to keep in sync for no benefit.
+
+## 025 — Image scale is asked for in the cell workflow, not globally
+**Date:** 2026-08-26 · **Status:** active
+**Decision:** `pixel_size_step` lives in `ui_shared` (both workflows may use it) but is
+only called by the cell workflow. The legacy workflow does not ask for µm/px.
+**Why:** 011 requires the value before any area figure is shown; the legacy workflow shows
+no area figures, so requiring it there would be a new obstacle with no benefit for the
+existing users. The roadmap listed it under "shared steps", which this satisfies as shared
+*code* invoked where area actually matters.
+**Alternatives rejected:** Asking globally — adds a required field to a workflow that does
+not need it. Putting it only in `ui_cells` — Phase 3's area budgets and any future legacy
+area reporting would want it back in the shared module.
