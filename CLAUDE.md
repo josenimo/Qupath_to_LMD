@@ -99,10 +99,18 @@ what will happen legible, then let them decide.
 - `uv run ruff check <files-I-touched>` must be clean for those files before I commit.
   The repo has a pre-existing backlog of ruff findings (see `facts.md`) — I do not
   bulk-fix it as a side effect of a feature commit; that is its own `chore/` branch.
+- **`uv run python tools/golden_harness.py check` must pass before I commit any change
+  that touches geometry, calibration, well assignment or export.** It compares the XML and
+  CSV byte-for-byte against `tools/golden/`. A coordinate shifted by a pixel or an inverted
+  Y flip is invisible in the running app and this is the only thing that catches it.
+  - If output is *meant* to change, I re-bless with `capture`, say so explicitly in the
+    commit message, and explain why the new bytes are correct. I never re-bless to make a
+    red check go green, and I never hand-edit files in `tools/golden/`.
+  - When I add a code path the four cases do not cover, I add a case.
 - There is no test suite (pytest was deliberately removed, see `decisions.md`). So for
-  logic changes I write a throwaway script in the scratchpad that imports from
-  `src/qupath_to_lmd/` and exercises the function on a demo geojson, and I paste the
-  relevant output into my report. Throwaway scripts stay out of the repo.
+  logic changes beyond the harness's reach I write a throwaway script in the scratchpad
+  that imports from `src/qupath_to_lmd/` and exercises the function on a demo geojson, and
+  I paste the relevant output into my report. Throwaway scripts stay out of the repo.
 - `src/qupath_to_lmd/mock_streamlit.py` (`patch_streamlit()`) lets `core`/`utils` run
   outside Streamlit — I use it for those scripts instead of standing up a fake session.
 

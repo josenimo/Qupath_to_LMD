@@ -201,10 +201,11 @@ Still open:
 - **`randomize` has no seed.** `plate.sample_layout` calls `random.sample` unseeded, so a
   randomized layout cannot be reproduced or reported in a methods section. Phase 4
   introduces seeds for the selection engine; this should join them.
-- **`py-lmd`'s `Collection.plot` blocks under a GUI matplotlib backend.** Found while
-  building the Phase 0 harness: a plain `python` run on macOS hangs indefinitely unless
-  `MPLBACKEND=Agg` is set. Harmless in the deployed app and under `streamlit run` (no
-  display, so Agg is chosen), but any headless script that builds a collection must set it.
+- **`py-lmd`'s `Collection.plot` calls `plt.show()`** (`lmd/lib.py:182`), so it blocks
+  forever under a GUI matplotlib backend. A plain `python` run on macOS hangs unless
+  `MPLBACKEND=Agg` is set; under Agg it merely warns "FigureCanvasAgg is non-interactive".
+  Harmless in the deployed app and under `streamlit run` (no display, so Agg is chosen), but
+  any headless script that builds a collection must set it — `tools/golden_harness.py` does.
 - `pytest` is still a declared dependency with no tests (`decisions.md` 006/008).
 - `ruff check .` reports **5 findings**, all in `mock_streamlit.py` (I001, D205, D212,
   2×W293) — down from 32 before Phase 0, because the files carrying the rest are gone.
@@ -231,10 +232,26 @@ Fixed in Phase 0 (`decisions.md` 021), kept here briefly so the history is legib
 
 ## Regression harness
 
-There is no test suite, so the Phase 0 refactor was gated on byte-identical output
-(`decisions.md` 014). The scripts live in the session scratchpad rather than the repo, and
-the recipe is worth keeping: capture XML+CSV from the pre-refactor code for four cases
-(annotations, cells, cells exploded, annotations on a 96 plate), then re-run the same cases
-through the new API and compare bytes. All eight artefacts matched. Any future change to
-coordinate handling, calibration ordering or simplification should be checked the same way —
-and note it needs `MPLBACKEND=Agg` (see above).
+`tools/golden_harness.py`, with the reference output in `tools/golden/` (8 files, ~220 KB).
+
+```
+uv run python tools/golden_harness.py check      # compare against the golden files
+uv run python tools/golden_harness.py capture    # re-bless, only when output should change
+```
+
+Four cases, each covering a path where a change could silently move coordinates:
+`annotations` (ordinary mini-bulk), `cells` (128 shapes with measurements),
+`cells_exploded` (one well per shape), `annotations_96` (different plate geometry). Each
+produces an XML and a CSV, so 8 artefacts.
+
+- The committed golden files are **byte-identical to output captured from the pre-Phase-0
+  code**, so the reference traces back to the version that had been in production.
+- Verified to fail as well as pass: replacing `export.ORIENTATION_TRANSFORM` with the
+  identity matrix (a broken Y flip) makes all four XML comparisons differ and `check` exit 1.
+- It sets `MPLBACKEND=Agg` itself, so it needs no special invocation.
+- What it does **not** cover: the UI, the QC/warning behaviour, LineString geometries (no
+  demo file has one), and any input outside the four cases. It also proves "unchanged", not
+  "correct" — a pre-existing coordinate bug would be faithfully preserved.
+
+`CLAUDE.md` rule 6 makes running it mandatory before committing anything that touches
+geometry, calibration, well assignment or export.
