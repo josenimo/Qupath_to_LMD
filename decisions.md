@@ -729,3 +729,33 @@ confirm gate.
 unseeded-randomize gap that had been recorded as a known quirk. `plan_from_selection` now
 accepts the assignment already shown to the user, so a replicate that ends up with no shapes
 keeps its well rather than quietly disappearing from the plate.
+
+## 046 — Phase 5 delivered: smoothing tolerance and cutting order
+**Date:** 2026-08-26 · **Status:** active
+**Decision:** The shared export step exposes two parameters for both workflows: the
+simplification tolerance in pixels (default 1.0, as 019 settled) and the cutting order
+(`none` / `grouped` / `hilbert`, default `none`). Defaults reproduce today's output exactly,
+which the golden files verify.
+**Why:** `ROADMAP.md` Phase 5. Both parameters were previously hard-coded, and the order one
+turned out to matter more than expected — see below.
+**What the investigation found:** writing shapes in load order makes the LMD move its
+collector **759 times for 900 shapes across 9 wells**, where 8 movements would do; the XML had
+760 contiguous cap runs against a possible 9. That is a real instrument cost that has always
+been there. Grouping by well fixes the movements but slightly lengthens stage travel
+(392 877 px vs 346 038 px) because it ignores position within a well; hilbert fixes both,
+reaching 213 295 px — 62% of unordered — with 8 movements.
+**Why the default is still `none`:** the legacy workflow is frozen, and reordering changes
+every existing user's XML. The improvement is offered, explained, and reported with
+before-and-after numbers so the choice is informed — which is 003 applied to a performance
+question rather than a safety one. If Jose would rather make grouping the default, that is a
+one-line change plus a golden re-bless.
+**Why hilbert and not greedy:** py-lmd's `tsp_greedy_solve` lazily imports `umap`
+(`lmd/segmentation.py:120`) and umap-learn is not a py-lmd dependency, so it raises
+`ModuleNotFoundError`. Adding umap-learn would pull numba and scikit-learn onto a free-tier
+deployment for a solver that loses to hilbert on this data. Hilbert order 7 is used, per
+py-lmd's own guidance for whole-slide areas; it is not exposed, because it is a knob whose
+meaning is hard to convey and 7 was best at every size measured.
+**Verified:** 18 checks — every mode is a permutation of all shapes, grouping yields exactly
+one movement per well, hilbert beats both, reordering never moves a shape to a different well,
+the XML holds the same shapes in a different order, tolerance trades vertices as expected, and
+both parameters reach `provenance.json`.

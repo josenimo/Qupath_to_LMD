@@ -49,7 +49,8 @@ src/qupath_to_lmd/
   budget.py                       BudgetMode, ClassBudget, feasibility, total_groups
   selection.py                    SelectionMode, SelectionParams, select, grid_bins
   plot.py                         plot_shapes — class overview, selection preview, QC image
-  export.py                       build_collection, build_bundle, ORIENTATION_TRANSFORM
+  export.py                       build_collection, build_bundle, PathOrder,
+                                  order_for_cutting, path_stats, ORIENTATION_TRANSFORM
   extras.py                       QuPath classes.json generation
   === UI layer: Streamlit, owns session_state ===
   ui_shared.py                    steps both workflows use
@@ -129,7 +130,7 @@ are shared, then the router dispatches to one of two workflows.
 **Legacy then continues:** 4 optional class split · 5 plate layout · 6 process and download.
 **Cells then continues:** 4 image scale (optional) · 5 class statistics and selection ·
 6 replicates and budgets · 7 plate and capacity · 8 selection with preview · 9 export.
-Both workflows now reach a downloadable collection.
+Both workflows reach a downloadable collection, and both share the same export parameters.
 
 Step numbers are passed into the `ui_shared` step functions rather than hard-coded, because
 the two workflows reach the shared steps at different points.
@@ -310,6 +311,33 @@ categoricals × replicate count, cycling 6 hard-coded colours as Java signed int
   `model.plan_from_selection` then takes that approved mapping rather than recomputing it, so
   a replicate that ends up with no shapes keeps its well instead of quietly vanishing.
   Groups beyond the available wells are reported, never silently dropped.
+
+## Export parameters (Phase 5)
+
+Both workflows expose the same two, in the shared export step.
+
+- **Smoothing tolerance**, in pixels, default 1.0 — unchanged from what the app has always
+  used (`decisions.md` 019). Measured on 900 real shapes: tolerance 0 gives 12 432 vertices,
+  1.0 gives 7 938, 5.0 gives 4 586.
+- **Cutting order** (`export.PathOrder`), default `NONE`, so **default output is byte-identical
+  to before** — the golden files confirm it.
+  - `NONE` — the order shapes were loaded in.
+  - `GROUPED` — all of a well's shapes together, wells visited in plate order.
+  - `HILBERT` — grouped, and the path within each well shortened with py-lmd's
+    `tsp_hilbert_solve` at order 7.
+- **The current default is genuinely poor for the instrument**, which is worth knowing:
+  900 shapes across 9 wells needs **759 collector movements** in load order, against 8 when
+  grouped. The XML had 760 contiguous cap runs where 9 would do. Grouping alone lengthens
+  stage travel slightly (392 877 px vs 346 038 px) because it ignores position; hilbert fixes
+  both at once — 213 295 px, 62% of unordered, with 8 movements.
+- Reordering never changes which shape goes to which well; asserted directly.
+- **`tsp_greedy_solve` is unavailable.** It lazily imports `umap` inside
+  `lmd/segmentation.py:120`, and umap-learn is not a py-lmd dependency. Adding it would pull
+  numba and scikit-learn onto a free-tier deployment for a solver that loses to hilbert here,
+  so only hilbert is offered.
+- Hilbert cost and quality by shape count, order 7: 0.06 s at 100, 0.33 s at 900, 0.93 s at
+  2700, 2.70 s at 8000. Lower orders are faster but markedly worse above ~1000 shapes
+  (p=3 gives 13–14% of baseline length, p=7 gives 2–4%). Only runs on a button press.
 
 ## Session state keys
 
