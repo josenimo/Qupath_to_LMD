@@ -402,3 +402,36 @@ kind of wrong that only shows up in the mass spec. Asking the user per file — 
 something QuPath already has a display convention for.
 **Consequence:** anything with a classification but no usable name at all is now dropped
 with its own count, so `classification_name` is never `None` downstream.
+
+## 028 — Multi-class names are joined with `--`, sorted, and imply no hierarchy
+**Date:** 2026-08-26 · **Status:** active · **supersedes the separator chosen in 027**
+**Decision:** Jose's call. The multi-class separator is `--`, not `": "`. Class names are
+also sorted before joining, so `["Tumor", "Immune cells"]` and `["Immune cells", "Tumor"]`
+both give `Immune cells--Tumor`.
+**Why:** `": "` reads as a hierarchy — parent and child — and a multi-class object has
+neither. There can easily be four or more classes in a combination, where a colon-chained
+name would be actively misleading. 027's reasoning (mirror QuPath's display) put fidelity
+to QuPath above clarity for the user, which is the wrong trade for a name that decides which
+well tissue lands in. Sorting follows from the same premise: if order carries no meaning,
+two orderings must not produce two classes, or one biological category would silently split
+across two wells.
+**Cost accepted:** the class name is alphabetical rather than in QuPath's own order, so
+`Tumor, Immune cells` in QuPath appears here as `Immune cells--Tumor`.
+**Verified:** renaming shifts the class's alphabetical position, so its auto-assigned well
+moves. Confirmed against the golden files that the **828 coordinate values are byte-identical**
+and only the class-to-well mapping changed (B3 and B4 swapped). `multiclass_cells` goldens
+re-blessed on that basis; the other four cases untouched.
+
+## 029 — The pixel-size cross-check is opportunistic, never required
+**Date:** 2026-08-26 · **Status:** active · refines 011
+**Decision:** Nothing in the app requires QuPath `measurements`. Areas are computed from
+shape geometry and the user's µm/px. When area measurements happen to be present, the
+cross-check runs; when they are not, the app says so in a caption rather than a warning, and
+does not suggest re-exporting.
+**Why:** Jose pointed out that relying on users to tick "include measurements" is
+unreliable — and the real 14145-cell export proves it, having none at all. So the absent
+case is the *normal* case, and warning about it every time trains users to ignore warnings,
+which is expensive in an app whose warnings are the safety mechanism (003). The cross-check
+is a free bonus when the data allows it, not a prerequisite.
+**Consequence for Phase 2:** per-class statistics must derive area from geometry × µm/px,
+never from `Cell: Area`.

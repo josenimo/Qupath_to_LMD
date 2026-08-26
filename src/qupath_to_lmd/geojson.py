@@ -14,9 +14,11 @@ from loguru import logger
 
 from qupath_to_lmd.model import CLASS_NAME
 
-# QuPath displays a derived (multi-class) classification as "Parent: Child"; mirroring that
-# means a class name in this app reads the same as it did in QuPath.
-MULTICLASS_SEPARATOR = ": "
+# Joins the classes of a multi-class object into one class name. Deliberately not ": ",
+# which reads as a hierarchy — QuPath multi-class objects have no parent and no child, and
+# there can be four or more of them. Names are sorted before joining so the same set of
+# classes always produces the same class name, whatever order QuPath wrote them in.
+MULTICLASS_SEPARATOR = "--"
 
 
 class GeojsonError(Exception):
@@ -119,9 +121,9 @@ def _classification_name(value) -> str | None:
 
     QuPath writes it as a JSON string, though geopandas sometimes hands back a dict. A
     single-class object has `name`; a **multi-class** object has `names` (plural) holding
-    every class applied to it. Multi-class names are joined with `": "`, which is how
-    QuPath itself displays derived classes, so what the user sees here matches what they
-    saw when annotating.
+    every class applied to it. Multi-class names are sorted and joined with
+    `MULTICLASS_SEPARATOR` into a single flat class name — the classes are peers, not a
+    hierarchy, and sorting means one set of classes always yields one class name.
     """
     if isinstance(value, str):
         try:
@@ -138,7 +140,7 @@ def _classification_name(value) -> str | None:
 
     names = value.get("names")
     if isinstance(names, list) and names:
-        return MULTICLASS_SEPARATOR.join(str(part) for part in names)
+        return MULTICLASS_SEPARATOR.join(sorted(str(part) for part in names))
     return None
 
 

@@ -78,10 +78,10 @@ def upload_step(step: str = "1"):
         total = sum(report.multiclass_counts.values())
         listed = ", ".join(f"{name} ({count})" for name, count in list(report.multiclass_counts.items())[:6])
         st.warning(
-            f"{total} objects carry more than one QuPath class. They are treated as their own "
-            f"combined classes, named the way QuPath displays them: {listed}. "
-            "They are neither of their parent classes here — assign them a well of their own, "
-            "or reclassify in QuPath if that is not what you want."
+            f"{total} objects carry more than one QuPath class. Each combination becomes its "
+            f"own class, with the class names joined by `--`: {listed}. "
+            "These objects are not counted under any of their individual classes — give each "
+            "combination its own well, or reclassify in QuPath if that is not what you want."
         )
     if report.n_multipolygons_dropped:
         st.warning(
@@ -184,7 +184,9 @@ def pixel_size_step(step: str = "4") -> float | None:
     st.markdown(
         "How many micrometres does one pixel of your image cover? QuPath shows this in "
         "*Image → Image properties → Pixel width*. Every area below is computed from it, so "
-        "a wrong value gives you a correct-looking collection of the wrong amount of tissue."
+        "a wrong value gives you a correct-looking collection of the wrong amount of tissue. "
+        "This is the only thing the app needs it for — areas are measured from the shapes "
+        "themselves, not from QuPath measurements."
     )
 
     entered = st.number_input(
@@ -203,9 +205,11 @@ def pixel_size_step(step: str = "4") -> float | None:
 
     report = qc.pixel_size_qc(st.session_state.gdf, entered)
     if report.implied_um_per_px is None:
-        st.warning(
-            "This file has no QuPath area measurements, so the value cannot be cross-checked. "
-            "Please double-check it against QuPath yourself."
+        # Measurements are optional on export and most files will not have them, so this is
+        # the normal case. Stating it quietly keeps the real warnings worth reading.
+        st.caption(
+            "This file carries no QuPath measurements, so the value could not be "
+            "cross-checked automatically. Nothing else needs them."
         )
     elif report.is_concerning:
         st.warning(

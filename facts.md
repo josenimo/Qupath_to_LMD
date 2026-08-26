@@ -82,8 +82,9 @@ Verified against both demo files.
   three shapes, all seen in one real QuPath 0.7.0 export:
   - `{"name": "Tumor", "color": [...]}` — a single class
   - `{"names": ["Tumor", "Immune cells"], "color": [...]}` — **multi-class**, note the
-    plural. Joined with `": "` (`geojson.MULTICLASS_SEPARATOR`) to mirror how QuPath
-    displays derived classes, giving one combined class the user can assign a well to.
+    plural. Sorted and joined with `--` (`geojson.MULTICLASS_SEPARATOR`) into one flat
+    combined class the user can assign a well to, e.g. `Immune cells--Tumor`. Sorted so one
+    set of classes always yields one class name regardless of the order QuPath wrote them.
   - missing entirely — unclassified, dropped with a count
 - `name` — set on calibration Points, `None` on annotations and cells. **QuPath omits a
   property entirely when no object in the export has it**, so a file with no calibration
@@ -181,9 +182,9 @@ categoricals × replicate count, cycling 6 hard-coded colours as Java signed int
   Verified on both demo files (`Single_cells.geojson` → cells, `TD_01…` → legacy).
 - `qc.pixel_size_qc` cross-checks the user's µm/px against `sqrt(Cell: Area / polygon area)`
   and warns above 5% disagreement. On `Single_cells.geojson` the implied value is
-  0.3467 µm/px with 0.23% spread, so entering 3.467 is flagged as 10.00×. Annotation-only
-  files have no area measurements, so the check reports that it could not run rather than
-  failing. The entered value is never overwritten (`decisions.md` 011).
+  0.3467 µm/px with 0.23% spread, so entering 3.467 is flagged as 10.00×. Files without area
+  measurements are the normal case, so the check reports quietly that it could not run. The
+  entered value is never overwritten (`decisions.md` 011, 029).
 - `geojson.measurements_frame` explodes the `measurements` JSON into a DataFrame indexed
   like the input frame. Phase 2's per-class statistics will build on it.
 
@@ -245,11 +246,13 @@ Not scope creep — recorded so nobody rediscovers them, and so a fix is a delib
 
 Still open:
 
-- **A realistic cell export may carry no `measurements` at all.** QuPath's "Export objects
-  as GeoJSON" only includes them if the user ticks the option, and the 14145-cell
-  `Exemplar001` export has none. So `qc.pixel_size_qc` cannot cross-check µm/px on a
-  typical export, and Phase 2 statistics will have to derive area from geometry rather than
-  from `Cell: Area`. Users wanting the cross-check must include measurements when exporting.
+- **Nothing in the app requires QuPath `measurements`.** Areas are computed from the shape
+  geometry and the user's µm/px, so a plain export without measurements is fully supported —
+  which matters because QuPath only includes them if the user ticks the option, and a real
+  14145-cell export had none. `qc.pixel_size_qc` is therefore **opportunistic**: it
+  cross-checks µm/px only when area measurements happen to be present, and says so quietly
+  (`st.caption`, not a warning) when they are not. Do not build anything that depends on
+  measurements being there.
 
 - **`randomize` has no seed.** `plate.sample_layout` calls `random.sample` unseeded, so a
   randomized layout cannot be reproduced or reported in a methods section. Phase 4
