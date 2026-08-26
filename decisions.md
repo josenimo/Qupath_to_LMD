@@ -512,3 +512,27 @@ colour when the selection changes. The dot fallback is measured, not guessed: po
 rendering is ~1.8 s at 50 000 shapes and ~7.6 s at 200 000, against 0.14 s for centroids.
 **Alternatives rejected:** an interactive plotting library (see 017) — still deferred.
 Matplotlib's default tab10 — not colourblind-safe.
+
+## 034 — Phase 2 statistics table: µm² throughout, std dev, no density, no area floor
+**Date:** 2026-08-26 · **Status:** active · revises 032
+**Decision:** Jose's review of the Phase 2 table. Total area is reported in **µm²**, not mm².
+The convex-hull "Spread" column is replaced by the **standard deviation of shape area**. The
+**density** column is removed. The optional area-floor count is **removed** entirely.
+**Why:** every other column was already in µm², so mm² for the total meant reading two units
+in one row. Standard deviation belongs with the median and quartiles as a dispersion measure
+of the same quantity, where the hull spread was answering a different question nobody had
+asked. Density followed the hull and went with it. The area floor was a global threshold
+bolted onto a per-class table, and a minimum shape area is really a *selection criterion* —
+it belongs with the per-class replicate and budget inputs in Phase 3, not here.
+**Consequence:** `_extent_mm2` and its shapely hull machinery are gone, which also removes
+the only part of `stats.py` that was more than a groupby.
+
+## 035 — The plot legend sits outside the axes
+**Date:** 2026-08-26 · **Status:** active
+**Decision:** `plot.plot_shapes` places the legend with
+`figure.legend(loc="outside right upper")` rather than inside the axes, and the default
+figure is wider than tall to give it a column.
+**Why:** Jose reported the legend overlapping the figure. An inside legend covers tissue,
+and the tissue is the entire point of the picture — for a class with shapes in the top-right
+corner the legend would hide exactly what the user is trying to judge. The `outside ...`
+locations require constrained layout, which the figure already uses.

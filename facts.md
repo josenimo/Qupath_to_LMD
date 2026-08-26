@@ -200,22 +200,21 @@ categoricals × replicate count, cycling 6 hard-coded colours as Java signed int
 
 ## Statistics and plotting (Phase 2)
 
-- `stats.class_statistics(gdf, pixel_size_um, area_floor_um2=0)` returns a numeric frame
-  indexed by class: shape count, total area (µm² and mm²), median/Q1/Q3/min/max area,
-  convex-hull spread in mm², density per mm², and optionally how many shapes fall below an
-  area floor. `stats.for_display` renames and orders the columns for the UI.
+- `stats.class_statistics(gdf, pixel_size_um)` returns a numeric frame indexed by class:
+  shape count, total area, median, standard deviation, Q1, Q3, min and max — all in µm².
+  `stats.for_display` renames and orders the columns for the UI. Standard deviation is `NaN`
+  for a single-shape class, which is honest: one shape has no spread.
 - **Areas come from `geometry.area × (µm/px)²`, never from QuPath `measurements`**
   (`decisions.md` 029). Cross-checked against `Cell: Area` on `Single_cells.geojson`:
   median ratio **0.9998**, 5–95% 0.9916–1.0079. So the geometry route is accurate and works
   on exports that carry no measurements at all.
-- Density divides by the convex hull of the class's **centroids**, not of the full
-  geometries — much cheaper and no less informative. Fewer than three centroids, or
-  collinear ones, give a zero-area hull, so density comes out `NaN` rather than infinity.
 - `plot.plot_shapes(gdf, included=..., calibration_array=...)` returns a matplotlib
   `Figure`. Classes not in `included` are drawn grey, so a user sees what they are leaving
   out. Above `plot.POLYGON_LIMIT` (20 000) shapes it draws one dot per shape instead of an
   outline. Colours are Okabe-Ito, assigned by sorted class name so a class keeps its colour
-  across redraws. The y axis is inverted so the view matches QuPath's.
+  across redraws. The y axis is inverted so the view matches QuPath's. The legend sits
+  **outside** the axes (`figure.legend(loc="outside right upper")`, which needs the
+  constrained layout the figure is built with) — a legend inside covers tissue.
 - Built on `matplotlib.figure.Figure`, **not `pyplot`** — pyplot keeps every figure in a
   global registry and Streamlit reruns would leak them.
 - Timings on the 14145-shape export: statistics 0.038 s, full polygon render 0.16 s.

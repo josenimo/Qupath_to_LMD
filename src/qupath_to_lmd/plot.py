@@ -35,7 +35,7 @@ def plot_shapes(
     included: list[str] | None = None,
     calibration_array: numpy.ndarray | None = None,
     title: str | None = None,
-    figsize: tuple[float, float] = (8.0, 8.0),
+    figsize: tuple[float, float] = (10.0, 7.5),
 ) -> Figure:
     """Draw shapes coloured by class.
 
@@ -81,7 +81,9 @@ def plot_shapes(
         for name in classes
     ]
     if handles:
-        axes.legend(handles=handles, fontsize=8, loc="upper right", framealpha=0.9)
+        # Placed outside the axes: a legend inside covers tissue, and tissue is the point.
+        # "outside ..." locations need constrained layout, which the figure above uses.
+        figure.legend(handles=handles, fontsize=8, loc="outside right upper", frameon=False)
 
     # QuPath image coordinates grow downward, so inverting y makes this look like the view
     # the user annotated in.

@@ -21,28 +21,8 @@ def class_selection_step(pixel_size_um: float, step: str = "5") -> list[str]:
         "collecting before deciding on amounts."
     )
 
-    floor = st.number_input(
-        "Optional: ignore shapes smaller than (µm²)",
-        min_value=0.0,
-        value=0.0,
-        step=1.0,
-        help=(
-            "Counts how many shapes in each class fall below this area, so you can see how "
-            "much of a class is too small to be worth collecting. 0 turns the count off. "
-            "Nothing is removed at this stage."
-        ),
-    )
-
-    table = stats.class_statistics(gdf, pixel_size_um=pixel_size_um, area_floor_um2=floor)
+    table = stats.class_statistics(gdf, pixel_size_um=pixel_size_um)
     st.dataframe(stats.for_display(table), width="stretch")
-
-    if floor > 0:
-        total_below = int(table["shapes_below_floor"].sum())
-        if total_below:
-            st.caption(
-                f"{total_below} of {len(gdf)} shapes are smaller than {floor:g} µm². "
-                "They are still included — this is a count, not a filter."
-            )
 
     all_classes = table.index.tolist()
     selected = st.multiselect(
@@ -62,8 +42,8 @@ def class_selection_step(pixel_size_um: float, step: str = "5") -> list[str]:
 
     kept = table.loc[selected]
     st.write(
-        f"**{int(kept['shapes'].sum())} shapes** across {len(selected)} classes, "
-        f"totalling **{kept['area_total_mm2'].sum():.3f} mm²** of tissue."
+        f"**{int(kept['shapes'].sum()):,} shapes** across {len(selected)} classes, "
+        f"totalling **{kept['area_total_um2'].sum():,.0f} µm²** of tissue."
     )
     return selected
 
