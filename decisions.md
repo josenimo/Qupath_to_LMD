@@ -366,3 +366,39 @@ existing users. The roadmap listed it under "shared steps", which this satisfies
 **Alternatives rejected:** Asking globally — adds a required field to a workflow that does
 not need it. Putting it only in `ui_cells` — Phase 3's area budgets and any future legacy
 area reporting would want it back in the shared module.
+
+## 026 — A file with no calibration points is readable, not rejected
+**Date:** 2026-08-26 · **Status:** active · supersedes the `name`-column gate added in 021
+**Decision:** `read_and_qc` no longer requires a `name` column. Its absence means the file
+has no named point annotations, which is reported as "no calibration points" at the
+calibration step with instructions for adding them in QuPath. Only a genuinely unusable
+file — no features, or no `classification` column at all — still raises `GeojsonError`.
+**Why:** Jose hit this with a real QuPath 0.7.0 export of 14145 segmented cells. QuPath
+omits a property entirely when no object in the export carries it, so a file without
+calibration points has no `name` column, and the app rejected it with "Export as a
+FeatureCollection with named calibration points" — which the user *had* done. The message
+named the wrong cause and blocked a readable file, against 003. Missing calibration points
+is a real problem, but the fix is in QuPath and the app should say so precisely.
+**Alternatives rejected:** Keeping the hard stop with a better message — the file loads
+fine, and the user can still inspect classes and plate layouts while going back to QuPath
+for the points.
+
+## 027 — Multi-class QuPath objects become one combined class
+**Date:** 2026-08-26 · **Status:** active
+**Decision:** A QuPath object classified with several classes exports as
+`{"names": ["Tumor", "Immune cells"]}` — plural. Those names are joined with `": "` into a
+single class, mirroring how QuPath displays derived classes. The count and the resulting
+names are warned about on screen, saying explicitly that such objects are *neither* of
+their parent classes here.
+**Why:** Found in the same export: 1130 of 8537 classified cells were multi-class, and the
+app read them as `None`. That polluted the class list and then crashed the plate layout,
+because `sorted()` cannot compare `None` with a string. Joining is the least surprising
+repair — the class reads the same as it did in QuPath — and a double-positive cell is a
+genuine biological category someone may well want in its own well. Silently folding them
+into one parent class would misassign tissue.
+**Alternatives rejected:** Dropping them with a warning — throws away real data the user
+classified deliberately. Assigning them to the first parent class — silently wrong, and the
+kind of wrong that only shows up in the mass spec. Asking the user per file — a dialog for
+something QuPath already has a display convention for.
+**Consequence:** anything with a classification but no usable name at all is now dropped
+with its own count, so `classification_name` is never `None` downstream.

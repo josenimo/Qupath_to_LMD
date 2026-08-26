@@ -68,6 +68,21 @@ def upload_step(step: str = "1"):
             f"{report.n_unclassified_dropped} objects have no QuPath classification. "
             "These are unclassified objects and cannot be assigned to a well, so they are ignored."
         )
+    if report.n_unnamed_classification_dropped:
+        st.warning(
+            f"{report.n_unnamed_classification_dropped} objects have a QuPath classification "
+            "that carries no usable class name, so they cannot be assigned to a well and are "
+            "ignored. If you expected these, check how they are classified in QuPath."
+        )
+    if report.multiclass_counts:
+        total = sum(report.multiclass_counts.values())
+        listed = ", ".join(f"{name} ({count})" for name, count in list(report.multiclass_counts.items())[:6])
+        st.warning(
+            f"{total} objects carry more than one QuPath class. They are treated as their own "
+            f"combined classes, named the way QuPath displays them: {listed}. "
+            "They are neither of their parent classes here — assign them a well of their own, "
+            "or reclassify in QuPath if that is not what you want."
+        )
     if report.n_multipolygons_dropped:
         st.warning(
             f"{report.n_multipolygons_dropped} MultiPolygon objects found. These are not supported — "
@@ -121,7 +136,15 @@ def calibration_step(step: str = "3"):
     st.markdown(f"## Step {step}: Calibration points")
 
     if not st.session_state.calibration_points:
-        st.warning("No calibration points found in the GeoJSON file.")
+        st.warning(
+            "**No calibration points in this file, so no collection can be made from it.** "
+            "The LMD needs three reference points to map image coordinates onto the stage.\n\n"
+            "In QuPath: select the point tool, click three spots on the slide (ideally close "
+            "to the tissue you want to cut), give each point annotation a name in the "
+            "annotation list, then export again. The export must include the point "
+            "annotations as well as your cells or regions — if you exported a selection, the "
+            "points were probably left out."
+        )
         return
 
     options = list(st.session_state.calibration_points)

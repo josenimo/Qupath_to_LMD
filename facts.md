@@ -60,6 +60,8 @@ tools/
 demo_Qupath_project/              real QuPath project used as test fixture
   TD_01_verysmall_mIF.geojson     9 features: 6 annotation Polygons + 3 calibration Points
   Single_cells.geojson            131 features: 121 cells + 7 annotations + 3 Points
+  multiclass_cells.geojson        72 cells from a real QuPath 0.7.0 export: single-class,
+                                  multi-class and unclassified, plus 3 added calib points
   demo_samples_and_wells.txt      python-dict-literal saw file for the upload path
   QuPath_scripts/*.groovy         detections_to_annotations, select_random_detections
 assets/                           screenshots, example classes.json
@@ -76,8 +78,18 @@ Verified against both demo files.
   `"detection"`. **`objectType` is the natural discriminator between the two planned
   workflows**, and a single file can legitimately mix them (`Single_cells.geojson` has both).
 - `classification` — arrives as a **JSON string** (`'{ "name": ..., "color": [r,g,b] }'`),
-  not a dict, hence the `ast.literal_eval` on it. `None` for unclassified objects.
-- `name` — set on calibration Points, `None` on annotations and cells.
+  not a dict, hence the `ast.literal_eval` on it. Absent for unclassified objects. Comes in
+  three shapes, all seen in one real QuPath 0.7.0 export:
+  - `{"name": "Tumor", "color": [...]}` — a single class
+  - `{"names": ["Tumor", "Immune cells"], "color": [...]}` — **multi-class**, note the
+    plural. Joined with `": "` (`geojson.MULTICLASS_SEPARATOR`) to mirror how QuPath
+    displays derived classes, giving one combined class the user can assign a well to.
+  - missing entirely — unclassified, dropped with a count
+- `name` — set on calibration Points, `None` on annotations and cells. **QuPath omits a
+  property entirely when no object in the export has it**, so a file with no calibration
+  points has no `name` column at all. That is the single most common shape of a "broken"
+  export and it is not broken — the user just has not added the points, or exported a
+  selection that left them out.
 - `isLocked` — present on annotations, NaN elsewhere.
 - `measurements` — **only on cells/detections**, a JSON string with QuPath's per-object
   measurements. `Single_cells.geojson` carries **126 fields** per cell:
@@ -233,6 +245,12 @@ Not scope creep — recorded so nobody rediscovers them, and so a fix is a delib
 
 Still open:
 
+- **A realistic cell export may carry no `measurements` at all.** QuPath's "Export objects
+  as GeoJSON" only includes them if the user ticks the option, and the 14145-cell
+  `Exemplar001` export has none. So `qc.pixel_size_qc` cannot cross-check µm/px on a
+  typical export, and Phase 2 statistics will have to derive area from geometry rather than
+  from `Cell: Area`. Users wanting the cross-check must include measurements when exporting.
+
 - **`randomize` has no seed.** `plate.sample_layout` calls `random.sample` unseeded, so a
   randomized layout cannot be reproduced or reported in a methods section. Phase 4
   introduces seeds for the selection engine; this should join them.
@@ -274,10 +292,11 @@ uv run python tools/golden_harness.py check      # compare against the golden fi
 uv run python tools/golden_harness.py capture    # re-bless, only when output should change
 ```
 
-Four cases, each covering a path where a change could silently move coordinates:
+Five cases, each covering a path where a change could silently move coordinates:
 `annotations` (ordinary mini-bulk), `cells` (128 shapes with measurements),
-`cells_exploded` (one well per shape), `annotations_96` (different plate geometry). Each
-produces an XML and a CSV, so 8 artefacts.
+`cells_exploded` (one well per shape), `annotations_96` (different plate geometry),
+`multiclass_cells` (real QuPath 0.7.0 export shape). Each produces an XML and a CSV, so
+10 artefacts.
 
 - The committed golden files are **byte-identical to output captured from the pre-Phase-0
   code**, so the reference traces back to the version that had been in production.

@@ -14,6 +14,10 @@ from loguru import logger
 
 from qupath_to_lmd.model import CLASS_NAME
 
+# QuPath displays a derived (multi-class) classification as "Parent: Child"; mirroring that
+# means a class name in this app reads the same as it did in QuPath.
+MULTICLASS_SEPARATOR = ": "
+
 
 class GeojsonError(Exception):
     """The file cannot be used at all — no geometry, or no way to find calibration points."""
@@ -26,6 +30,8 @@ class GeojsonReport:
     geometry_counts: dict[str, int] = field(default_factory=dict)
     calibration_point_names: list[str] = field(default_factory=list)
     n_unclassified_dropped: int = 0
+    n_unnamed_classification_dropped: int = 0
+    multiclass_counts: dict[str, int] = field(default_factory=dict)
     multipolygons: pandas.DataFrame | None = None
     n_shapes_kept: int = 0
 
@@ -57,23 +63,18 @@ def read_and_qc(source) -> tuple[geopandas.GeoDataFrame, dict[str, list[float]],
 
     if gdf.empty:
         raise GeojsonError("The uploaded GeoJSON file has no features in it.")
-    if "name" not in gdf.columns:
-        raise GeojsonError(
-            "No 'name' column found, so calibration points cannot be identified. "
-            "Export from QuPath as a FeatureCollection with named calibration points."
-        )
 
     report = GeojsonReport(geometry_counts=gdf.geometry.geom_type.value_counts().to_dict())
     logger.info(f"Geometries: {report.geometry_counts}")
 
     # Named Points are the calibration-point pool; all Points then leave the frame.
-    points = gdf[gdf.geometry.geom_type == "Point"]
-    calibration_points = {
-        row["name"]: [row.geometry.x, row.geometry.y] for _, row in points.iterrows() if row["name"]
-    }
+    # A file with none is perfectly readable — the user just has not added them yet, which
+    # the UI reports. QuPath omits a property entirely when no object has it, so a file
+    # without calibration points has no `name` column at all.
+    calibration_points = _calibration_points(gdf)
     report.calibration_point_names = list(calibration_points)
     logger.info(f"Found {len(calibration_points)} calibration points: {report.calibration_point_names}")
-    gdf = gdf[gdf.geometry.geom_type != "Point"]
+    gdf = gdf[~gdf.geometry.geom_type.isin(["Point", "MultiPoint"])]
 
     # Unclassified QuPath objects cannot be assigned to a well.
     if "classification" not in gdf.columns:
@@ -86,6 +87,19 @@ def read_and_qc(source) -> tuple[geopandas.GeoDataFrame, dict[str, list[float]],
 
     gdf = gdf.copy()
     gdf[CLASS_NAME] = gdf["classification"].apply(_classification_name)
+
+    # QuPath multi-class objects carry `names` (plural) instead of `name`; those are joined
+    # into one class below. Anything still unnamed cannot be assigned to a well.
+    report.multiclass_counts = (
+        gdf.loc[gdf[CLASS_NAME].str.contains(MULTICLASS_SEPARATOR, na=False), CLASS_NAME]
+        .value_counts()
+        .to_dict()
+    )
+    unnamed = gdf[CLASS_NAME].isna()
+    if unnamed.any():
+        report.n_unnamed_classification_dropped = int(unnamed.sum())
+        logger.warning(f"Dropping {int(unnamed.sum())} objects whose classification has no usable name")
+        gdf = gdf[~unnamed]
 
     # py-lmd cuts a single closed path per shape, so a MultiPolygon has no meaning here.
     is_multi = gdf.geometry.geom_type == "MultiPolygon"
@@ -101,10 +115,58 @@ def read_and_qc(source) -> tuple[geopandas.GeoDataFrame, dict[str, list[float]],
 
 
 def _classification_name(value) -> str | None:
-    """QuPath writes `classification` as a JSON string; geopandas sometimes gives a dict."""
+    """Resolve a QuPath `classification` value to a single class name.
+
+    QuPath writes it as a JSON string, though geopandas sometimes hands back a dict. A
+    single-class object has `name`; a **multi-class** object has `names` (plural) holding
+    every class applied to it. Multi-class names are joined with `": "`, which is how
+    QuPath itself displays derived classes, so what the user sees here matches what they
+    saw when annotating.
+    """
     if isinstance(value, str):
-        return ast.literal_eval(value).get("name")
-    return value.get("name") if isinstance(value, dict) else None
+        try:
+            value = ast.literal_eval(value)
+        except (ValueError, SyntaxError):
+            logger.debug(f"Could not parse classification {value!r}")
+            return None
+    if not isinstance(value, dict):
+        return None
+
+    name = value.get("name")
+    if name:
+        return name
+
+    names = value.get("names")
+    if isinstance(names, list) and names:
+        return MULTICLASS_SEPARATOR.join(str(part) for part in names)
+    return None
+
+
+def _calibration_points(gdf: geopandas.GeoDataFrame) -> dict[str, list[float]]:
+    """Named Point geometries, as `{name: [x, y]}`.
+
+    Handles `MultiPoint` too: QuPath's point tool can put several points into one
+    annotation object, which exports as a single MultiPoint feature. Each part is exposed
+    separately, suffixed `#1`, `#2`, so all three can still be picked individually.
+    """
+    if "name" not in gdf.columns:
+        return {}
+
+    points = gdf[gdf.geometry.geom_type.isin(["Point", "MultiPoint"])]
+    calibration_points: dict[str, list[float]] = {}
+
+    for _, row in points.iterrows():
+        label = row["name"]
+        if not label or pandas.isna(label):
+            continue
+        geometry = row.geometry
+        if geometry.geom_type == "Point":
+            calibration_points[str(label)] = [geometry.x, geometry.y]
+        else:
+            for i, part in enumerate(geometry.geoms, start=1):
+                calibration_points[f"{label} #{i}"] = [part.x, part.y]
+
+    return calibration_points
 
 
 def explode_classes(gdf: geopandas.GeoDataFrame, classes: list[str]) -> geopandas.GeoDataFrame:
