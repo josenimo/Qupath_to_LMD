@@ -1,60 +1,66 @@
-import io
 import json
 import sys
 import tempfile
 import uuid
-import zipfile
 from pathlib import Path
 
 import streamlit as st
 from loguru import logger
 
-import qupath_to_lmd.core as core
-import qupath_to_lmd.utils as utils
+from qupath_to_lmd import export, extras, geojson, plate, qc
+from qupath_to_lmd.model import CLASS_NAME, plan_from_class_wells
 
 ####################
 ## Page settings ###
 ####################
 st.set_page_config(layout="wide")
-if 'session_id' not in st.session_state:
-    st.session_state.session_id = str(uuid.uuid4())
-if 'view_mode' not in st.session_state:
-   st.session_state.view_mode = 'default'
-if 'gdf' not in st.session_state:
-   st.session_state.gdf = None
-if 'calibs' not in st.session_state:
-   st.session_state.calibs = None
-if 'calib_array' not in st.session_state:
-   st.session_state.calib_array = None
-if 'saw' not in st.session_state:
-   st.session_state.saw = None
-if "use_plate_wells" not in st.session_state:
-   st.session_state.use_plate_wells = True
-if 'file_name' not in st.session_state:
-   st.session_state.file_name = None
-if 'available_points_dict' not in st.session_state:
-   st.session_state.available_points_dict = None
-if 'xml_content' not in st.session_state:
-   st.session_state.xml_content = None
-if 'csv_content' not in st.session_state:
-   st.session_state.csv_content = None
-if 'zip_buffer' not in st.session_state:
-    st.session_state.zip_buffer = None
-if 'plate_df' not in st.session_state:
-   st.session_state.plate_df = None
-if 'plate_gen_params' not in st.session_state:
-   st.session_state.plate_gen_params = None
-if 'show_saw_uploader' not in st.session_state:
-   st.session_state.show_saw_uploader = False
 
-# Configure logging
-if "log_file_path" not in st.session_state or st.session_state.log_file_path is None:
-   temp_log_file = tempfile.NamedTemporaryFile(delete=False, suffix=".log")
-   st.session_state.log_file_path = temp_log_file.name
+DEFAULTS = {
+    "session_id": None,          # set below, needs a fresh uuid
+    "view_mode": "default",
+    "gdf": None,
+    "geojson_report": None,
+    "calibration_points": None,
+    "calibs": None,
+    "calib_array": None,
+    "saw": None,
+    "use_plate_wells": True,
+    "file_name": None,
+    "plate_df": None,
+    "plate_gen_params": None,
+    "show_saw_uploader": False,
+    "zip_buffer": None,
+    "bundle_name": None,
+    "collection_image": None,
+    "log_file_path": None,
+}
+for key, value in DEFAULTS.items():
+    if key not in st.session_state:
+        st.session_state[key] = value
+if st.session_state.session_id is None:
+    st.session_state.session_id = str(uuid.uuid4())
+
+# Configure logging. The log file ships inside the download bundle, so it is part of the
+# support story: a user can send it with a Github issue.
+if st.session_state.log_file_path is None:
+    st.session_state.log_file_path = tempfile.NamedTemporaryFile(delete=False, suffix=".log").name
 
 logger.remove()
 logger.add(st.session_state.log_file_path, format="<green>{time:HH:mm:ss.SS}</green> | <level>{level}</level> | {message}")
 logger.add(sys.stdout, colorize=True, format="<green>{time:HH:mm:ss.SS}</green> | <level>{level}</level> | {message}", level="DEBUG")
+
+
+@st.cache_data(show_spinner="Reading and checking your GeoJSON...")
+def read_geojson(source):
+    """Cached wrapper so a rerun does not re-parse the same upload."""
+    return geojson.read_and_qc(source)
+
+
+def reset_file_state():
+    """Forget the uploaded file and everything derived from it."""
+    for key in ("gdf", "geojson_report", "calibration_points", "calibs", "calib_array", "file_name"):
+        st.session_state[key] = None
+
 
 ####################
 ### Introduction ###
@@ -79,40 +85,67 @@ st.markdown("""
 uploaded_file = st.file_uploader(label="Choose a file", type="geojson", accept_multiple_files=False)
 
 if uploaded_file:
-   # process and QC geojson automatically if new file
-   if st.session_state.file_name != uploaded_file.name or st.session_state.gdf is None:
-      logger.info(f"New file detected: {uploaded_file.name}")
-      st.session_state.file_name = uploaded_file.name
-      # process and QC geojson
-      st.session_state.gdf, st.session_state.available_points_dict = core.load_and_QC_geojson_file(geojson_path=uploaded_file)
+    if st.session_state.file_name != uploaded_file.name or st.session_state.gdf is None:
+        logger.info(f"New file detected: {uploaded_file.name}")
+        try:
+            gdf, calibration_points, report = read_geojson(uploaded_file)
+        except geojson.GeojsonError as error:
+            st.error(str(error))
+            logger.error(str(error))
+            st.stop()
+        st.session_state.file_name = uploaded_file.name
+        st.session_state.gdf = gdf
+        st.session_state.calibration_points = calibration_points
+        st.session_state.geojson_report = report
 
-   if st.session_state.available_points_dict:
-      calib_options = list(st.session_state.available_points_dict.keys())
+    report = st.session_state.geojson_report
+    counts = ", ".join(f"{count} {name}s" for name, count in report.geometry_counts.items())
+    st.write(f"Geometries in file: {counts}")
 
-      c1 = st.selectbox("Select calibration point 1", calib_options, index=0 if len(calib_options)>0 else None)
-      c2 = st.selectbox("Select calibration point 2", calib_options, index=1 if len(calib_options)>1 else None)
-      c3 = st.selectbox("Select calibration point 3", calib_options, index=2 if len(calib_options)>2 else None)
+    if report.n_unclassified_dropped:
+        st.warning(
+            f"{report.n_unclassified_dropped} objects have no QuPath classification. "
+            "These are unclassified objects and cannot be assigned to a well, so they are ignored."
+        )
+    if report.n_multipolygons_dropped:
+        st.warning(
+            f"{report.n_multipolygons_dropped} MultiPolygon objects found. These are not supported — "
+            "please split them into single polygons in QuPath. Processing continues without them."
+        )
+        st.table(report.multipolygons)
 
-      st.session_state.calibs = [c1, c2, c3]
-      logger.info(f"Calibration points chosen: {st.session_state.calibs}")
+    st.success(f"File check complete, {report.n_shapes_kept} shapes available.")
 
-      # Perform triangle QC
-      if all(st.session_state.calibs):
-         st.session_state.calib_array = core.perform_triangle_qc(
-            st.session_state.gdf,
-            st.session_state.available_points_dict,
-            st.session_state.calibs
-         )
-   else:
-      st.warning("No calibration points found in the GeoJSON file.")
+    if st.session_state.calibration_points:
+        calib_options = list(st.session_state.calibration_points)
+
+        c1 = st.selectbox("Select calibration point 1", calib_options, index=0 if len(calib_options) > 0 else None)
+        c2 = st.selectbox("Select calibration point 2", calib_options, index=1 if len(calib_options) > 1 else None)
+        c3 = st.selectbox("Select calibration point 3", calib_options, index=2 if len(calib_options) > 2 else None)
+
+        st.session_state.calibs = [c1, c2, c3]
+        logger.info(f"Calibration points chosen: {st.session_state.calibs}")
+
+        if all(st.session_state.calibs):
+            triangle = qc.triangle_qc(
+                st.session_state.gdf,
+                st.session_state.calibration_points,
+                st.session_state.calibs,
+            )
+            st.session_state.calib_array = triangle.calibration_array
+            st.write(f"{triangle.fraction_inside * 100:.2f}% of shapes are inside the calibration triangle")
+            if triangle.is_concerning:
+                st.warning(
+                    "Less than 25% of your shapes fall inside the calibration triangle. Shapes far "
+                    "outside it get distorted by the coordinate transform, so you may cut the wrong "
+                    "tissue. Consider calibration points closer to your annotations."
+                )
+    else:
+        st.warning("No calibration points found in the GeoJSON file.")
 
 else:
-   if st.session_state.file_name is not None:
-      st.session_state.file_name = None
-      st.session_state.gdf = None
-      st.session_state.available_points_dict = None
-      st.session_state.calibs = None
-      st.session_state.calib_array = None
+    if st.session_state.file_name is not None:
+        reset_file_state()
 
 st.divider()
 
@@ -121,28 +154,25 @@ st.divider()
 ##########################################################
 
 if st.session_state.gdf is not None:
-   st.markdown("## Step 1.1 (Optional): Split a class into many classes")
-   st.markdown(
-      "For one or more classes below. For every shape belonging to a selected class, "
-      "a unique, numbered ID will be created (e.g., 'T-Cell' -> 'T-Cell_001', 'T-Cell_002'). "
-      "This is useful for single-cell collection."
-   )
+    st.markdown("## Step 1.1 (Optional): Split a class into many classes")
+    st.markdown(
+        "For one or more classes below. For every shape belonging to a selected class, "
+        "a unique, numbered ID will be created (e.g., 'T-Cell' -> 'T-Cell_001', 'T-Cell_002'). "
+        "This is useful for single-cell collection."
+    )
 
-   all_classes = st.session_state.gdf['classification_name'].unique().tolist()
-   classes_to_make_unique = st.multiselect("Select classes to make unique:", options=all_classes)
+    all_classes = st.session_state.gdf[CLASS_NAME].unique().tolist()
+    classes_to_make_unique = st.multiselect("Select classes to make unique:", options=all_classes)
 
-   if st.button("Generate Unique Names"):
-      logger.info("Generate Unique Names button clicked")
-      if not classes_to_make_unique:
-         st.warning("Please select at least one class to make unique.")
-         logger.warning("No classes selected to make unique")
-      else:
-         logger.debug(f"Classes to make unique: {classes_to_make_unique}")
-         # This function modifies st.session_state.gdf
-         core.make_classes_unique(classes_to_make_unique)
-         st.session_state.saw = None
-         st.session_state.plate_df = None
-         st.info("Chosen classes were split up, check below.")
+    if st.button("Generate Unique Names"):
+        logger.info("Generate Unique Names button clicked")
+        if not classes_to_make_unique:
+            st.warning("Please select at least one class to make unique.")
+        else:
+            st.session_state.gdf = geojson.explode_classes(st.session_state.gdf, classes_to_make_unique)
+            st.session_state.saw = None
+            st.session_state.plate_df = None
+            st.info("Chosen classes were split up, check below.")
 
 st.divider()
 
@@ -151,27 +181,27 @@ st.divider()
 ########################################
 
 st.markdown("""
-            ## Step 2: Decide which plate to collect into, either 384 or 96 well plate.  
-            Decide how many wells to make unavailable as a margin (for 384wp we suggest a margin of 2).  
-            Decide how many wells to leave blank in between, for easier pipetting.  
+            ## Step 2: Decide which plate to collect into, either 384 or 96 well plate.
+            Decide how many wells to make unavailable as a margin (for 384wp we suggest a margin of 2).
+            Decide how many wells to leave blank in between, for easier pipetting.
             """)
 
 st.write("You can increase plate size by dragging bottom right corner")
 
-plate, margin, step_row, step_col = st.columns(4)
-with plate:
-   plate_string = st.selectbox('Select a plate type',('384 well plate', '96 well plate'))
-with margin:
-   margin_int = st.number_input('Margin (integer)', min_value=0, max_value=10, value=1)
-with step_row:
-   step_row_int = st.number_input('Space between rows', min_value=1, max_value=10, value=1)
-with step_col:
-   step_col_int = st.number_input('Space between columns', min_value=1, max_value=10, value=1)
+plate_col, margin_col, step_row_col, step_col_col = st.columns(4)
+with plate_col:
+    plate_string = st.selectbox("Select a plate type", ("384 well plate", "96 well plate"))
+with margin_col:
+    margin_int = st.number_input("Margin (integer)", min_value=0, max_value=10, value=1)
+with step_row_col:
+    step_row_int = st.number_input("Space between rows", min_value=1, max_value=10, value=1)
+with step_col_col:
+    step_col_int = st.number_input("Space between columns", min_value=1, max_value=10, value=1)
 
-plate_type = plate_string.split(' ')[0]
-acceptable_wells_list = utils.create_list_of_acceptable_wells(
-   plate=plate_type, margins=margin_int, step_row=step_row_int, step_col=step_col_int)
-acceptable_wells_set = set(acceptable_wells_list)
+plate_type = plate_string.split(" ")[0]
+wells = plate.acceptable_wells(
+    plate=plate_type, margins=margin_int, step_row=step_row_int, step_col=step_col_int
+)
 
 #####################################
 ## Step 2.1: User inputs for plate ##
@@ -179,20 +209,19 @@ acceptable_wells_set = set(acceptable_wells_list)
 
 col1, col2, col3 = st.columns(3)
 with col1:
-   if st.button("Show plate format with default wells"):
-      st.session_state.view_mode = 'default'
-      logger.info("Show plate format with default wells -- ButtonPress")
+    if st.button("Show plate format with default wells"):
+        st.session_state.view_mode = "default"
+        logger.info("Show plate format with default wells -- ButtonPress")
 with col2:
-   if st.button("Show plate format with samples from geojson"):
-      logger.info("Show plate format with samples from geojson -- ButtonPress")
-      if uploaded_file is None:
-         st.warning("Please upload a file first.")
-      else:
-         st.session_state.view_mode = 'samples'
+    if st.button("Show plate format with samples from geojson"):
+        logger.info("Show plate format with samples from geojson -- ButtonPress")
+        if uploaded_file is None:
+            st.warning("Please upload a file first.")
+        else:
+            st.session_state.view_mode = "samples"
 with col3:
-   randomize_toggle = st.toggle("Randomize samples", value=False)
+    randomize_toggle = st.toggle("Randomize samples", value=False)
 
-# --- Logic to decide if we need to regenerate the plate dataframe ---
 plate_gen_params = {
     "plate_type": plate_type,
     "margins": margin_int,
@@ -200,80 +229,118 @@ plate_gen_params = {
     "step_col": step_col_int,
     "randomize": randomize_toggle,
 }
-
-# Check if parameters have changed since the last run, or if the df is missing
-params_have_changed = st.session_state.get('plate_gen_params') != plate_gen_params
-df_missing = 'plate_df' not in st.session_state or st.session_state.plate_df is None
+params_have_changed = st.session_state.plate_gen_params != plate_gen_params
 
 ##############################
 ## Step 2.2 Plot dataframe ##
 ##############################
 
-if st.session_state.view_mode == 'default':
-   df = utils.create_dataframe_samples_wells(plate_string=plate_type)
-   mapping = utils.provide_highlighting_for_df(acceptable_wells_set=acceptable_wells_set)
-   st.dataframe(df.style.map(mapping), width="stretch" )
+if st.session_state.view_mode == "default":
+    layout = plate.default_layout(plate=plate_type)
+    st.dataframe(layout.style.map(plate.highlight(set(wells))), width="stretch")
 
-elif st.session_state.view_mode == 'samples':
-   if uploaded_file is None:
-      st.warning("File no longer available. Please upload a file or switch to the default view.")
-   else:
-      # Only regenerate the dataframe if parameters have changed or it doesn't exist
-      if (params_have_changed or df_missing) and st.session_state.gdf is not None:
-         st.session_state.plate_gen_params = plate_gen_params # Store the new params
-         st.session_state.plate_df = utils.create_dataframe_samples_wells(
-            randomize = randomize_toggle,
-            plate_string = plate_type,
-            acceptable_wells_list = acceptable_wells_list)
-      if st.session_state.plate_df is not None:
-         mapping = utils.provide_highlighting_for_df()
-         st.dataframe(st.session_state.plate_df.style.map(mapping), width="stretch")
+elif st.session_state.view_mode == "samples":
+    if uploaded_file is None:
+        st.warning("File no longer available. Please upload a file or switch to the default view.")
+    elif st.session_state.gdf is not None:
+        if params_have_changed or st.session_state.plate_df is None:
+            st.session_state.plate_gen_params = plate_gen_params
+            layout, unplaced = plate.sample_layout(
+                classes=st.session_state.gdf[CLASS_NAME].unique().tolist(),
+                plate=plate_type,
+                wells=wells,
+                randomize=randomize_toggle,
+            )
+            st.session_state.plate_df = layout
+            if unplaced:
+                st.warning(
+                    f"{len(unplaced)} classes do not fit in the {len(wells)} usable wells and are "
+                    f"not placed: {', '.join(unplaced[:10])}{' ...' if len(unplaced) > 10 else ''}. "
+                    "Reduce the margin or spacing, use a 384 well plate, or collect in two rounds."
+                )
+        if st.session_state.plate_df is not None:
+            classes = set(st.session_state.gdf[CLASS_NAME])
+            st.dataframe(st.session_state.plate_df.style.map(plate.highlight(classes)), width="stretch")
 
 if st.button("Confirm and use this plate layout"):
-   logger.info("Confirm and use this plate layout -- ButtonPress")
-   if st.session_state.view_mode == 'samples' and st.session_state.plate_df is not None:
-      saw_from_df = utils.dataframe_to_saw_dict(st.session_state.plate_df)
-      st.session_state.saw = saw_from_df
-      core.load_and_QC_SamplesandWells(st.session_state.saw)
-      st.session_state.use_plate_wells = True # To indicate we are using a plate layout
-      st.success("Samples and wells layout confirmed, you are ready for Step 3!")
-   else:
-      st.warning("Please generate and view a plate layout with samples from your GeoJSON first.")
+    logger.info("Confirm and use this plate layout -- ButtonPress")
+    if st.session_state.view_mode == "samples" and st.session_state.plate_df is not None:
+        st.session_state.saw = plate.layout_to_saw(st.session_state.plate_df)
+        st.session_state.use_plate_wells = True
+        report = qc.validate_saw(
+            st.session_state.saw,
+            st.session_state.gdf[CLASS_NAME].unique().tolist(),
+            plate=plate_type,
+        )
+        if report.missing_classes:
+            st.warning(
+                f"{len(report.missing_classes)} classes in your file have no well and will not be "
+                f"collected: {', '.join(sorted(report.missing_classes)[:10])}"
+            )
+        if report.invalid_wells:
+            st.error(f"These wells do not exist on a {plate_type} well plate: {sorted(report.invalid_wells)}")
+        else:
+            st.success("Samples and wells layout confirmed, you are ready for Step 3!")
+    else:
+        st.warning("Please generate and view a plate layout with samples from your GeoJSON first.")
 
 if st.session_state.saw is not None and st.session_state.use_plate_wells:
-   st.download_button(
-      label="Download samples and wells setup",
-      data=json.dumps(st.session_state.saw, indent=4),
-      file_name="samples_and_wells.json",
-      mime="application/json"
-   )
-   with st.expander("View Samples and Wells Dictionary", expanded=False):
-      st.write(st.session_state.saw) # Show the user the resulting dictionary
+    st.download_button(
+        label="Download samples and wells setup",
+        data=json.dumps(st.session_state.saw, indent=4),
+        file_name="samples_and_wells.json",
+        mime="application/json",
+    )
+    with st.expander("View Samples and Wells Dictionary", expanded=False):
+        st.write(st.session_state.saw)
 
 #################################################
 ### Step 2.3 : Upload Custom Samples and Wells ##
 #################################################
 
-# button to upload custom samples and wells
 if st.button("Upload custom samples and wells dictionary, will override"):
-   logger.info("Upload custom samples and wells dictionary -- ButtonPress")
-   st.session_state.show_saw_uploader = True
+    logger.info("Upload custom samples and wells dictionary -- ButtonPress")
+    st.session_state.show_saw_uploader = True
 
-# If the button has been clicked, show the uploader and process the file
 if st.session_state.show_saw_uploader:
-   uploaded_saw = st.file_uploader(
-      label = "Choose a custom samples-and-wells file (.txt or .json)",
-      type = ["txt", "json"],
-      accept_multiple_files=False,
-      key="saw_uploader"
-   )
-   if uploaded_saw is not None:
-      st.session_state.saw = utils.parse_dictionary_from_file(uploaded_saw)
-      logger.debug(uploaded_saw)
-      core.load_and_QC_SamplesandWells(st.session_state.saw)
-      st.session_state.use_plate_wells = False
-      st.success("Custom samples and wells dictionary loaded and checked.")
-      st.session_state.show_saw_uploader = False
+    uploaded_saw = st.file_uploader(
+        label="Choose a custom samples-and-wells file (.txt or .json)",
+        type=["txt", "json"],
+        accept_multiple_files=False,
+        key="saw_uploader",
+    )
+    if uploaded_saw is not None:
+        try:
+            candidate = plate.parse_saw_file(uploaded_saw)
+        except plate.SawParseError as error:
+            st.error(f"Could not read that samples-and-wells file: {error}")
+            logger.error(f"Samples-and-wells parse failed: {error}")
+        else:
+            if st.session_state.gdf is None:
+                st.warning("Upload a GeoJSON first, so the scheme can be checked against your classes.")
+            else:
+                report = qc.validate_saw(
+                    candidate,
+                    st.session_state.gdf[CLASS_NAME].unique().tolist(),
+                    plate=plate_type,
+                )
+                if report.missing_classes:
+                    st.warning(
+                        f"Classes in your file with no well, they will not be collected: "
+                        f"{', '.join(sorted(report.missing_classes)[:10])}"
+                    )
+                if report.duplicate_wells:
+                    st.warning(f"Wells receiving more than one class: {report.duplicate_wells}")
+                if report.invalid_wells:
+                    st.error(
+                        f"These wells do not exist on a {plate_type} well plate: "
+                        f"{sorted(report.invalid_wells)}. Fix the file or change the plate type."
+                    )
+                else:
+                    st.session_state.saw = candidate
+                    st.session_state.use_plate_wells = False
+                    st.session_state.show_saw_uploader = False
+                    st.success(f"Custom samples and wells loaded and checked: {len(candidate)} classes.")
 
 ###############################
 ### Step 3: Process contours ##
@@ -281,49 +348,76 @@ if st.session_state.show_saw_uploader:
 
 st.markdown("""
             ## Step 3: Process to create .xml file for LMD
-            Here we create the .xml file from your geojson.  
-            Please download the QC image, and plate scheme for future reference.  
+            Here we create the .xml file from your geojson.
+            Please download the QC image, and plate scheme for future reference.
             """)
 
 if st.button("Process files"):
-   logger.info("Process files button clicked")
-   if st.session_state.gdf is not None and st.session_state.saw is not None:
-      logger.debug(st.session_state.gdf)
-      logger.debug(st.session_state.saw)
-      logger.debug(st.session_state.calibs)
-      xml_content, csv_content, image_path = core.create_collection()
-      st.session_state.xml_content = xml_content
-      st.session_state.csv_content = csv_content
+    logger.info("Process files button clicked")
+    if st.session_state.gdf is None:
+        st.warning("Please upload a GeoJSON file first.")
+    elif st.session_state.saw is None:
+        st.warning("Please confirm a plate layout or upload a samples-and-wells scheme first.")
+    elif st.session_state.calib_array is None:
+        st.warning("Please select three calibration points first.")
+    else:
+        plan = plan_from_class_wells(
+            gdf=st.session_state.gdf,
+            samples_and_wells=st.session_state.saw,
+            calibration_names=st.session_state.calibs,
+            calibration_array=st.session_state.calib_array,
+            source_file=st.session_state.file_name,
+            session_id=st.session_state.session_id,
+            params={
+                "simplify_tolerance_px": export.DEFAULT_SIMPLIFY_TOLERANCE,
+                "plate": plate_type,
+                "margins": margin_int,
+                "step_row": step_row_int,
+                "step_col": step_col_int,
+                "randomize": randomize_toggle,
+                "samples_and_wells_source": "plate builder" if st.session_state.use_plate_wells else "uploaded",
+            },
+        )
 
-      zip_buffer = io.BytesIO()
-      with zipfile.ZipFile(zip_buffer, "a", zipfile.ZIP_DEFLATED, False) as zip_file:
-         zip_file.writestr(f'{Path(st.session_state.file_name).stem}.xml', xml_content)
-         zip_file.writestr(f'{Path(st.session_state.file_name).stem}_384_wellplate.csv', csv_content)
-         zip_file.writestr('samples_and_wells.json', json.dumps(st.session_state.saw, indent=4))
-         with tempfile.NamedTemporaryFile(suffix=".geojson") as tmp_geojson:
-            tmp_gdf = utils.sanitize_gdf(st.session_state.gdf)
-            tmp_gdf.to_file(tmp_geojson.name, driver="GeoJSON")
-            zip_file.write(tmp_geojson.name, f'{Path(st.session_state.file_name).stem}_processed.geojson')
-         with open(image_path, "rb") as f:
-            zip_file.writestr("collection.png", f.read())
-         if "log_file_path" in st.session_state and st.session_state.log_file_path:
-            zip_file.write(st.session_state.log_file_path, f"log_{st.session_state.session_id}.log")
+        skipped = plan.skipped
+        if not skipped.empty:
+            st.warning(
+                f"{len(skipped)} of {len(plan.shapes)} shapes have no well and will not be cut. "
+                f"Their classes: {', '.join(sorted(set(skipped[CLASS_NAME]))[:10])}"
+            )
 
-      st.session_state.zip_buffer = zip_buffer
-      st.image(image_path, caption='Your Contours', width='content')
-      st.success("All files have been processed and are ready for download.")
-      logger.info("All files processed and zipped successfully")
-   else:
-      st.warning("Please ensure you have loaded a GeoJSON and provided a samples-and-wells scheme.")
-      logger.warning("GeoJSON or samples-and-wells scheme not found")
+        try:
+            result = export.build_collection(plan, samples_and_wells=st.session_state.saw, plate=plate_type)
+        except ValueError as error:
+            st.error(str(error))
+            logger.error(str(error))
+            st.stop()
+
+        st.session_state.zip_buffer = export.build_bundle(
+            plan=plan,
+            result=result,
+            samples_and_wells=st.session_state.saw,
+            plate=plate_type,
+            log_path=st.session_state.log_file_path,
+        )
+        st.session_state.bundle_name = f"{Path(st.session_state.file_name).stem}_collection.zip"
+        st.session_state.collection_image = result.image_path
+
+        st.write(
+            f"Collection: {result.n_shapes} shapes, {result.n_vertices} vertices, "
+            f"{len(plan.wells_used)} wells used."
+        )
+        st.image(result.image_path, caption="Your Contours", width="content")
+        st.success("All files have been processed and are ready for download.")
+        logger.success("All files processed and zipped successfully")
 
 if st.session_state.zip_buffer:
-   st.download_button(
-      label="Download files",
-      data=st.session_state.zip_buffer.getvalue(),
-      file_name=f"{Path(st.session_state.file_name).stem}_collection.zip",
-      mime="application/zip"
-   )
+    st.download_button(
+        label="Download files",
+        data=st.session_state.zip_buffer.getvalue(),
+        file_name=st.session_state.bundle_name or "collection.zip",
+        mime="application/zip",
+    )
 
 st.divider()
 st.divider()
@@ -346,22 +440,17 @@ st.divider()
 #################################
 st.markdown("""
             ## Extra #1 : Create QuPath classes from categoricals
-            Creating many QuPath classes can be tedious, and is very error prone, especially for large projects.  
-            This tool takes in two lists of categoricals, and a number for replicates, and create a class for every permutation.  
+            Creating many QuPath classes can be tedious, and is very error prone, especially for large projects.
+            This tool takes in two lists of categoricals, and a number for replicates, and create a class for every permutation.
 
             Afterwards you must:
-            1. Create a new QuPath project 
+            1. Create a new QuPath project
             2. Close QuPath window
             3. Delete `<QuPath project>/classifiers/annotations/classes.json`
             4. Replace with newly created file
             5. Rename it as `classes.json`
             6. Reopen QuPath with project, and you should see classes
             """)
-
-
-color_map = {"red": 0xFF0000,"green": 0x00FF00,"blue": 0x0000FF,
-            "magenta": 0xFF00FF,"cyan": 0x00FFFF,"yellow": 0xFFFF00}
-java_colors = [-(0x1000000 - rgb) for rgb in color_map.values()]
 
 input1 = st.text_area("Enter first categorical (comma-separated)", placeholder="example: celltype_A, celltype_B")
 input2 = st.text_area("Enter second categorical (comma-separated)", placeholder="example: control, drug_treated")
@@ -370,20 +459,17 @@ list1 = [i.strip() for i in input1.split(",") if i.strip()]
 list2 = [i.strip() for i in input2.split(",") if i.strip()]
 
 if st.button("Create class names for QuPath"):
-   list_of_samples = utils.generate_combinations(list1, list2, input3)
-   json_data = {"pathClasses": []}
-   for i, name in enumerate(list_of_samples):
-      json_data["pathClasses"].append({
-         "name": name,
-         "color": java_colors[i % len(java_colors)]
-      })
-   with open("classes.json", "w") as f:
-      json.dump(json_data, f, indent=2)
+    if not list1 or not list2:
+        st.warning("Please enter at least one value in each categorical.")
+    else:
+        names = extras.generate_combinations(list1, list2, int(input3))
+        st.write(f"{len(names)} class names created.")
+        st.download_button(
+            "Download classes.json for QuPath",
+            data=json.dumps(extras.build_classes_json(names), indent=2),
+            file_name="classes.json",
+            mime="application/json",
+        )
 
-   st.download_button("Download Samples and Wells file for Qupath", 
-                     data=Path('./classes.json').read_text(), 
-                     file_name="classes.json")
-
-st.image(image="./assets/sample_names_example.png",
-         caption="Example of class names for QuPath")
+st.image(image="./assets/sample_names_example.png", caption="Example of class names for QuPath")
 st.divider()
