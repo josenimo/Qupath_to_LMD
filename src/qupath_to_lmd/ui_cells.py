@@ -22,7 +22,17 @@ def class_selection_step(pixel_size_um: float, step: str = "5") -> list[str]:
     )
 
     table = stats.class_statistics(gdf, pixel_size_um=pixel_size_um)
-    st.dataframe(stats.for_display(table), width="stretch")
+    display = stats.for_display(table)
+    # Columns stay numeric so the table remains sortable; the format only trims the display.
+    st.dataframe(
+        display,
+        width="stretch",
+        column_config={
+            name: st.column_config.NumberColumn(name, format=f"%.{stats.DECIMALS}f")
+            for name in display.columns
+            if name != stats.DISPLAY_COLUMNS["shapes"]
+        },
+    )
 
     all_classes = table.index.tolist()
     selected = st.multiselect(
@@ -43,7 +53,7 @@ def class_selection_step(pixel_size_um: float, step: str = "5") -> list[str]:
     kept = table.loc[selected]
     st.write(
         f"**{int(kept['shapes'].sum()):,} shapes** across {len(selected)} classes, "
-        f"totalling **{kept['area_total_um2'].sum():,.0f} µm²** of tissue."
+        f"totalling **{kept['area_total_um2'].sum():,.{stats.DECIMALS}f} µm²** of tissue."
     )
     return selected
 

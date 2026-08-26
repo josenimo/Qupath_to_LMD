@@ -536,3 +536,17 @@ figure is wider than tall to give it a column.
 and the tissue is the entire point of the picture — for a class with shapes in the top-right
 corner the legend would hide exactly what the user is trying to judge. The `outside ...`
 locations require constrained layout, which the figure already uses.
+
+## 036 — Areas are displayed to two decimal places
+**Date:** 2026-08-26 · **Status:** active
+**Decision:** `stats.for_display` rounds every area column to `stats.DECIMALS` (2) decimal
+places and the UI formats them `%.2f`. Shape counts are left exact. The underlying frame
+keeps full precision; only the display is trimmed, and the columns stay numeric so the table
+still sorts numerically.
+**Why:** the raw values carry a long float tail — `147479.0769032064 µm²` — which reads as
+precision that segmentation boundaries and a hand-entered pixel size cannot support.
+Two decimals is enough to distinguish any two shapes anyone cares about.
+**Note:** I first implemented this as two *significant* figures, which turned 147479.08 into
+150000 — far coarser than intended and a real loss of information on totals. Jose clarified
+he meant decimals. Recorded because the two readings of "fewer sig figs" differ by orders of
+magnitude, and the wrong one silently destroys data in a table people make decisions from.

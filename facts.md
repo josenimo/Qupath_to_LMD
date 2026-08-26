@@ -202,8 +202,11 @@ categoricals × replicate count, cycling 6 hard-coded colours as Java signed int
 
 - `stats.class_statistics(gdf, pixel_size_um)` returns a numeric frame indexed by class:
   shape count, total area, median, standard deviation, Q1, Q3, min and max — all in µm².
-  `stats.for_display` renames and orders the columns for the UI. Standard deviation is `NaN`
-  for a single-shape class, which is honest: one shape has no spread.
+  `stats.for_display` renames, orders and rounds the columns for the UI — areas to
+  `stats.DECIMALS` (2) decimal places, shape counts left exact, because a count is not a
+  measurement. Columns stay numeric so the table sorts correctly; the `%.2f` column format
+  only trims what is shown. Standard deviation is `NaN` for a single-shape class, which is
+  honest: one shape has no spread.
 - **Areas come from `geometry.area × (µm/px)²`, never from QuPath `measurements`**
   (`decisions.md` 029). Cross-checked against `Cell: Area` on `Single_cells.geojson`:
   median ratio **0.9998**, 5–95% 0.9916–1.0079. So the geometry route is accurate and works

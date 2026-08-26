@@ -66,7 +66,20 @@ DISPLAY_COLUMNS = {
 }
 
 
+DECIMALS = 2
+
+
 def for_display(stats: pandas.DataFrame) -> pandas.DataFrame:
-    """Rename and order the columns for showing to a user."""
+    """Rename, order and round the columns for showing to a user.
+
+    Areas are rounded to two decimal places: the raw values carry a long float tail that
+    implies a precision segmentation boundaries and an entered pixel size do not have.
+    Shape counts are left exact — a count is not a measurement.
+    """
     columns = [c for c in DISPLAY_COLUMNS if c in stats.columns]
-    return stats[columns].rename(columns=DISPLAY_COLUMNS)
+    display = stats[columns].copy()
+
+    area_columns = [c for c in display.columns if c != "shapes"]
+    display[area_columns] = display[area_columns].round(DECIMALS)
+
+    return display.rename(columns=DISPLAY_COLUMNS)
