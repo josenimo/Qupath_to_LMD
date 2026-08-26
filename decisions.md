@@ -304,3 +304,27 @@ the MultiPolygon branch fixed, which would have raised `KeyError` for any user w
 duplication would have to be unpicked later, and the point of Phase 0 is that Phase 1
 inherits one clear structure. Indentation normalises to 4-space as a side effect of the
 files being new, so the codebase is now internally consistent (`CLAUDE.md` rule 9).
+
+## 022 — The golden harness lives in the repo and gating on it is mandatory
+**Date:** 2026-08-26 · **Status:** active
+**Decision:** The Phase 0 throwaway harness becomes `tools/golden_harness.py` with
+reference output committed in `tools/golden/` (8 files, ~220 KB). `CLAUDE.md` rule 6 now
+requires `check` to pass before committing any change that touches geometry, calibration,
+well assignment or export. Re-blessing with `capture` is allowed only when output is meant
+to change, must be stated in the commit message, and the files are never hand-edited.
+**Why:** It is the only check that can see the failure mode that matters here — a
+coordinate shifted by a pixel, an inverted Y flip, shapes added in a different order. All
+of those leave the app looking perfectly healthy and cut the wrong tissue. Phase 4's
+selection engine will change which shapes are chosen, so having a fixed reference for
+*how* a chosen shape is rendered becomes more valuable, not less. Committing the reference
+also means it traces to a specific version rather than to a scratchpad that gets cleaned.
+**Verified both directions:** the committed goldens are byte-identical to output captured
+from the pre-Phase-0 code, and replacing `ORIENTATION_TRANSFORM` with the identity matrix
+makes all four XML comparisons differ and `check` exit 1. A gate that cannot go red is
+worthless, so this was tested explicitly.
+**Alternatives rejected:** Leaving it in the scratchpad — it would be gone next session and
+the discipline would not survive. Reintroducing pytest to host it — reverses 006/008; the
+harness is a script, and it can be moved under pytest later if a suite ever arrives.
+**Known gaps, recorded rather than papered over:** no LineString case (no demo file has
+one), nothing covering the UI or the QC/warning behaviour, and it proves "unchanged" rather
+than "correct" — a pre-existing coordinate bug is faithfully preserved.
