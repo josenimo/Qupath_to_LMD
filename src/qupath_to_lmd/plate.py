@@ -50,6 +50,25 @@ def acceptable_wells(plate: str = "384", margins: int = 0, step_row: int = 1, st
     ]
 
 
+def wells_from(wells: list[str], start_well: str | None) -> list[str]:
+    """The usable wells from `start_well` onwards, in plate order.
+
+    Exists for collecting several slides into one plate: run the first slide from `B2`, note the
+    last well it used, then run the second from the next one along. No cross-file state and no
+    new concepts (`decisions.md` 061).
+
+    An unknown or unusable start well returns the list unchanged, so a typo degrades to the
+    normal behaviour rather than silently collecting nothing.
+    """
+    if not start_well:
+        return wells
+    normalised = str(start_well).strip().upper()
+    if normalised not in wells:
+        logger.warning(f"Start well {start_well!r} is not among the usable wells; ignoring it")
+        return wells
+    return wells[wells.index(normalised) :]
+
+
 def default_layout(plate: str = "384") -> pandas.DataFrame:
     """The bare plate, every cell holding its own well name."""
     rows, cols = plate_dimensions(plate)

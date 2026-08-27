@@ -331,6 +331,7 @@ def capacity_step(budgets: list[budget.ClassBudget], step: str = "7") -> dict:
         )
 
     samples_and_wells = plate.assign_wells(groups, usable, randomize=settings["randomize"])
+    samples_and_wells = ui_shared.editable_plate(samples_and_wells, settings["plate_type"], key_suffix="cells")
     st.session_state.saw = samples_and_wells
     ui_shared.plate_preview(
         samples_and_wells, settings["plate_type"], wells=usable, key_suffix="cells"

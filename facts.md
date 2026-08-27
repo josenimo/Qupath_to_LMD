@@ -336,6 +336,15 @@ categoricals × replicate count, cycling 6 hard-coded colours as Java signed int
   2206, which is genuinely unavoidable at 85% of a dense class.
 - **Seed is exposed and recorded** in `provenance.json`, so a selection can be reported in a
   methods section and reproduced.
+- **Start well** (`plate.wells_from`): filling begins at a chosen well instead of the first
+  usable one, which is how several slides reach one plate (`decisions.md` 061). The plate caption
+  reports the range used and names the well to start the next slide from. An unknown or unusable
+  start well degrades to the beginning with a warning, so a typo cannot silently collect nothing.
+- **The plate can be edited by hand**, opt-in behind a checkbox: `ui_shared.editable_plate` shows
+  the plate as an `st.data_editor` with a dropdown of samples per well. Not drag-and-drop —
+  Streamlit has none for grids and a real one would mean a custom frontend (`decisions.md` 055) —
+  and a dropdown cannot produce a typo or name a sample that does not exist. It errors if a sample
+  is dropped off the plate entirely and warns if two share a well.
 - The cell workflow has **no confirm step**: the assignment is recomputed from the current
   plate settings on every rerun, so changing the plate, margin, spacing or randomize toggle
   takes effect immediately and the plate table under the options always shows what will be

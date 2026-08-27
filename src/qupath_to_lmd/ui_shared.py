@@ -365,7 +365,7 @@ def plate_settings_step(step: str = "5") -> dict:
                 """)
     st.write("You can increase plate size by dragging bottom right corner")
 
-    plate_col, margin_col, step_row_col, step_col_col, random_col = st.columns(5)
+    plate_col, margin_col, step_row_col, step_col_col, start_col, random_col = st.columns(6)
     with plate_col:
         plate_string = st.selectbox("Select a plate type", ("384 well plate", "96 well plate"))
     with margin_col:
@@ -374,6 +374,19 @@ def plate_settings_step(step: str = "5") -> dict:
         step_row = st.number_input("Space between rows", min_value=1, max_value=10, value=1)
     with step_col_col:
         step_col = st.number_input("Space between columns", min_value=1, max_value=10, value=1)
+    with start_col:
+        start_well = st.text_input(
+            "Start at well",
+            value="",
+            placeholder="auto",
+            help=(
+                "Fill the plate from this well onwards instead of the first usable one. For "
+                "collecting several slides into one plate: run the first slide, note the last "
+                "well it used, then start the next slide after it. Leave blank to start at the "
+                "beginning."
+            ),
+        )
+
     with random_col:
         randomize = st.toggle(
             "Randomize wells",
@@ -386,15 +399,24 @@ def plate_settings_step(step: str = "5") -> dict:
         )
 
     plate_type = plate_string.split(" ")[0]
+    usable = plate.acceptable_wells(
+        plate=plate_type, margins=margin, step_row=step_row, step_col=step_col
+    )
+    wells = plate.wells_from(usable, start_well)
+    if start_well and wells is usable:
+        st.warning(
+            f"**{start_well}** is not one of the {len(usable)} wells this margin and spacing "
+            "leave usable, so filling starts from the beginning instead."
+        )
+
     return {
         "plate_type": plate_type,
         "margins": margin,
         "step_row": step_row,
         "step_col": step_col,
         "randomize": randomize,
-        "wells": plate.acceptable_wells(
-            plate=plate_type, margins=margin, step_row=step_row, step_col=step_col
-        ),
+        "start_well": start_well.strip().upper() or None,
+        "wells": wells,
     }
 
 
@@ -544,7 +566,16 @@ def plate_preview(
 
     layout = plate.placement_dataframe(samples_and_wells, plate=plate_type)
     st.dataframe(layout.style.map(plate.highlight(set(samples_and_wells))), width="stretch")
-    st.caption(f"{len(samples_and_wells)} wells in use on a {plate_type} well plate.")
+
+    used = sorted(samples_and_wells.values(), key=lambda w: (w[0], int(w[1:])))
+    caption = f"{len(samples_and_wells)} wells in use on a {plate_type} well plate"
+    if used:
+        caption += f", {used[0]} to {used[-1]}"
+        if wells:
+            remaining = [w for w in wells if w not in set(samples_and_wells)]
+            if remaining:
+                caption += f". For another slide into this plate, start at **{remaining[0]}**"
+    st.caption(caption + ".")
 
     if wells:
         with st.expander(f"Which wells the current margin and spacing leave usable ({len(wells)})"):
@@ -558,6 +589,66 @@ def plate_preview(
         mime="application/json",
         key=f"saw_download_{plate_type}_{len(samples_and_wells)}_{key_suffix}",
     )
+
+
+def editable_plate(
+    samples_and_wells: dict[str, str],
+    plate_type: str,
+    key_suffix: str = "",
+) -> dict[str, str]:
+    """Let the user move samples between wells by editing the plate directly.
+
+    Streamlit has no drag-and-drop into a grid, and a real one would mean a custom frontend
+    (`decisions.md` 055). Editing the plate in place is the same job done with a dropdown per
+    well, which cannot produce a typo or name a sample that does not exist.
+
+    Opt-in: the automatic assignment is almost always what the user wants, and an editor shown
+    unasked invites fiddling with something that was already correct.
+
+    Returns the assignment to use — the edited one if the user opened the editor, otherwise the
+    one passed in.
+    """
+    if not st.checkbox(
+        "Move samples between wells by hand",
+        value=False,
+        key=f"edit_plate_{key_suffix}",
+        help=(
+            "Opens the plate as an editable table. Pick a sample from any well's dropdown to "
+            "move it there, or clear a well to leave it empty. The automatic layout is used "
+            "unless you change something."
+        ),
+    ):
+        return samples_and_wells
+
+    layout = plate.placement_dataframe(samples_and_wells, plate=plate_type)
+    options = sorted(samples_and_wells)
+    edited = st.data_editor(
+        layout,
+        width="stretch",
+        key=f"plate_editor_{key_suffix}_{len(samples_and_wells)}",
+        column_config={
+            column: st.column_config.SelectboxColumn(column, options=options, required=False)
+            for column in layout.columns
+        },
+    )
+
+    by_well = plate.layout_to_saw(edited)
+    duplicated = [name for name in options if list(by_well.values()).count(by_well.get(name, "")) > 1]
+    placed = set(by_well)
+    missing = [name for name in options if name not in placed]
+
+    if missing:
+        st.error(
+            f"{len(missing)} sample(s) are no longer on the plate and will not be cut: "
+            f"{', '.join(missing[:8])}. Put them back in a well, or untick the box above to "
+            "return to the automatic layout."
+        )
+    if duplicated:
+        st.warning(f"More than one sample shares a well: {', '.join(sorted(set(duplicated))[:8])}.")
+    if not missing and not duplicated:
+        st.success(f"Using your layout: {len(by_well)} samples placed by hand.")
+
+    return by_well
 
 
 def export_step(settings: dict, build_plan, step: str = "6") -> None:

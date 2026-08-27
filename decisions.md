@@ -1067,3 +1067,35 @@ surviving median from 157 to 170 µm².
 **Still open** (`ROADMAP.md` round-two question 2): whether one default across biologies is right.
 It is wrong for `Immune cells` on the real export, and a default that is wrong for most classes
 trains users to change it, which defeats the purpose.
+
+## 061 — A start well, which is how several slides reach one plate
+**Date:** 2026-08-27 · **Status:** active · answers the question deferred in 020
+**Decision:** `plate.wells_from(wells, start_well)` returns the usable wells from a chosen one
+onwards, exposed as a "Start at well" input beside the other plate options. The plate caption
+reports the range used and names the well to begin the next slide from.
+**Why this solves multi-slide-into-one-plate:** run slide one from `B2`, read off that it ended at
+`B9`, run slide two from `B10` into the same plate. No cross-file state, no new concepts, and
+nothing to remember between sessions beyond a well name the app tells you. 020 deferred the
+problem as needing thought; this is the version that needs none.
+**Degrades rather than fails:** an unknown or unusable start well — a typo, or a well the margin
+excludes — returns the full list with a warning, because silently collecting nothing or half a
+plate is worse than ignoring the input.
+**Verified end to end:** two consecutive assignments into one plate reuse no wells.
+
+## 062 — The plate is editable by hand, opt-in
+**Date:** 2026-08-27 · **Status:** active · implements the alternative chosen in 055
+**Decision:** `ui_shared.editable_plate` shows the plate as an `st.data_editor` with a dropdown of
+samples per well, behind a checkbox that defaults to off. Ticking it switches from the automatic
+assignment to whatever the user arranges.
+**Why opt-in:** the automatic assignment is almost always what the user wants, and an editor shown
+unasked invites fiddling with something that was already correct. Off by default costs one click
+for the people who need it and nothing for everyone else.
+**Why a dropdown and not drag-and-drop:** 055 settled that — Streamlit has no drag-and-drop into a
+grid, `streamlit-sortables` cannot address 384 wells as targets, and a real plate drag-and-drop
+means a custom frontend on a deployment we spent a PR slimming. A dropdown is also *safer*: it
+cannot produce a typo or name a sample that does not exist.
+**Guards:** it errors if a sample has been dropped off the plate entirely, naming which, and warns
+if two share a well. Both are recoverable by unticking the box.
+**Jose is not convinced by dropdowns**, and said to build it and look. If it reads badly the
+fallback costs nothing: remove the checkbox and the automatic layout plus the start well already
+cover the multi-slide case.
