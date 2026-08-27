@@ -8,3 +8,10 @@ __pycache__
 # streamlit
 .devcontainer
 /.quarto/
+
+# PR bodies and throwaway scripts, never committed
+.scratch/
+
+# screen recordings: the GIF in assets/ is what belongs in the repo
+*.mov
+*.mp4

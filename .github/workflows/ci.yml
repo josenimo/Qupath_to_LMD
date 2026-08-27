@@ -1,0 +1,39 @@
+name: CI
+
+# Runs on every push and pull request. The golden harness is the important one: it is the only
+# check that can see a coordinate move, and a coordinate moving means the laser cuts the wrong
+# tissue.
+on:
+  push:
+    branches: [master, dev]
+  pull_request:
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install the project
+        run: uv sync --frozen
+
+      - name: Lint the files we own
+        # mock_streamlit.py carries a pre-existing backlog that is not fixed as a side effect of
+        # feature work (CLAUDE.md rule 6), so it is excluded here rather than left to fail CI.
+        run: uv run ruff check src streamlit_app.py tools tests --exclude src/qupath_to_lmd/mock_streamlit.py
+
+      - name: Run the test suite
+        env:
+          # py-lmd's Collection.plot calls plt.show(), which blocks under a GUI backend.
+          MPLBACKEND: Agg
+        run: uv run pytest -q
+
+      - name: Check the collection output is byte-identical
+        env:
+          MPLBACKEND: Agg
+        run: uv run python tools/golden_harness.py check
