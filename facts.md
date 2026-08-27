@@ -207,6 +207,9 @@ categoricals × replicate count, cycling 6 hard-coded colours as Java signed int
   varies 1.9× — because pixel size is a property of the whole optical path, not of the
   objective. The accompanying warning says so explicitly and points at QuPath's
   *Image → Image properties → Pixel width* as the real source.
+- `geojson.area_measurements` pulls out only QuPath's area field. Building the whole
+  `measurements_frame` to read one of ~100 columns cost 0.28 s and a 170 MB transient on every
+  rerun; the narrow version is 0.16 s with no measurable allocation (`decisions.md` 050).
 - `qc.pixel_size_qc` cross-checks the user's µm/px against `sqrt(Cell: Area / polygon area)`
   and warns above 5% disagreement. On `Single_cells.geojson` the implied value is
   0.3467 µm/px with 0.23% spread, so entering 3.467 is flagged as 10.00×. Files without area
@@ -482,6 +485,38 @@ Fixed in Phase 0 (`decisions.md` 021), kept here briefly so the history is legib
 - The MultiPolygon warning selected an `annotation_name` column that QuPath never writes,
   so that branch would have raised `KeyError` for any user who actually had a MultiPolygon.
   Verified against a synthetic file, then fixed.
+
+## Scale, measured (Phase 6)
+
+Profiled on Jose's real 83.7 MB / 14 145-feature export and on synthetic QuPath-shaped files.
+The roadmap said to measure before designing; the measurements changed what needed doing.
+
+| shapes | per widget change | on click | peak RSS |
+| --- | --- | --- | --- |
+| 8 537 (real export) | 0.49 s | 9.3 s | 688 MB |
+| 50 000 | 0.64 s | 9.7 s | 713 MB |
+| 150 000 | 1.94 s | 15.1 s | 936 MB |
+
+**Nothing breaks at 150 000 shapes** — it gets sluggish, not broken. Those per-rerun figures are
+the *uncached* library cost; the app caches them (below), so a user pays them once per change of
+input rather than once per widget touch.
+
+- **The data is cheap; the imports are not.** Memory attribution: bare Python 14 MB, +geopandas
+  and pandas 100 MB, +`lmd.lib` and matplotlib 243 MB, **+greedy's first call 597 MB**, +the whole
+  83.7 MB GeoJSON 674 MB. The frame itself is only 39 MB, 36 MB of which is the `measurements`
+  strings. So most of the footprint is libraries, and the single largest item is the numba/umap
+  JIT behind the greedy solver — about **354 MB, paid once per process on the first export**.
+  Hilbert's first call costs 33 MB by comparison.
+- **What runs on every rerun** was the thing to fix, since Streamlit re-executes the whole script
+  on every widget change: `selection.select` (1.40 s at 150 000 shapes) and `pixel_size_qc`
+  (0.28 s on the real file). Both are now cached in the UI layer, along with `class_statistics`,
+  which was being computed twice per rerun.
+- `plot_shapes` scales fine — 0.11 s at 150 000 — because it switches to centroids above
+  `POLYGON_LIMIT`. That earlier decision paid off.
+- Cache keys are explicit tuples, never the frame: hashing 150 000 rows would cost what the cache
+  saves. `_shape_fingerprint` is `(file name, row count, sorted class names)` — the class names
+  matter because exploding a class rewrites them in place, so a filename alone would serve a
+  stale selection.
 
 ## Regression harness
 

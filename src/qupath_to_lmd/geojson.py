@@ -263,6 +263,42 @@ def measurements_frame(gdf: geopandas.GeoDataFrame) -> pandas.DataFrame:
     return frame.reindex(gdf.index)
 
 
+def area_measurements(gdf: geopandas.GeoDataFrame) -> pandas.Series:
+    """QuPath's per-object area in µm², without parsing the other measurement fields.
+
+    A real export carries around 100 fields per cell, so building the whole frame to read one
+    column costs a quarter of a second and a large transient allocation on every rerun
+    (`decisions.md` 050). This pulls out just the area.
+    """
+    if "measurements" not in gdf.columns:
+        return pandas.Series(dtype="float64", index=gdf.index)
+
+    values = {}
+    for index, raw in gdf["measurements"].items():
+        parsed = None
+        if isinstance(raw, str) and raw.strip():
+            try:
+                parsed = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+        elif isinstance(raw, dict):
+            parsed = raw
+        if not parsed:
+            continue
+        key = _area_key(parsed)
+        if key:
+            values[index] = parsed[key]
+
+    return pandas.Series(values, dtype="float64").reindex(gdf.index)
+
+
+def _area_key(measurement: dict) -> str | None:
+    """`Cell: Area` if present, else any other field naming an area."""
+    if "Cell: Area" in measurement:
+        return "Cell: Area"
+    return next((k for k in measurement if str(k).strip().endswith("Area")), None)
+
+
 def area_measurement_column(measurements: pandas.DataFrame) -> str | None:
     """Find the column holding QuPath's object area, which it reports in µm².
 

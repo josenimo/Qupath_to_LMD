@@ -35,6 +35,16 @@ def _read_geojson(source):
     return geojson.read_and_qc(source)
 
 
+@st.cache_data(show_spinner=False)
+def _cached_pixel_size_qc(_gdf, cache_key: tuple, entered_um_per_px: float):
+    """Cross-check the entered scale, cached: it parses a measurement per shape.
+
+    Streamlit reruns the whole script on every widget change, so without this the check
+    re-parses every shape's area each time the user touches anything (`decisions.md` 050).
+    """
+    return qc.pixel_size_qc(_gdf, entered_um_per_px)
+
+
 def reset_file_state():
     """Forget the uploaded file and everything derived from it."""
     for key in ("gdf", "geojson_report", "calibration_points", "calibs", "calib_array", "file_name"):
@@ -269,7 +279,10 @@ def pixel_size_step(step: str = "4") -> float | None:
         )
         return None
 
-    report = qc.pixel_size_qc(st.session_state.gdf, entered)
+    gdf = st.session_state.gdf
+    report = _cached_pixel_size_qc(
+        gdf, (st.session_state.get("file_name"), len(gdf)), entered
+    )
     if report.implied_um_per_px is None:
         # Measurements are optional on export and most files will not have them, so this is
         # the normal case. Stating it quietly keeps the real warnings worth reading.

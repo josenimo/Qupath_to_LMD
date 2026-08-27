@@ -821,3 +821,30 @@ same settings re-derive the same assignment, and a changed setting propagates in
 wells, both now asserted — so the answer is that the plate table *is* the confirmation. If it
 still reads as ambiguous, the fix is a clearer statement next to the table rather than a
 Confirm button, which would only add a step that can be forgotten.
+
+## 050 — Phase 6: cache the rerun path, narrow the measurement parsing
+**Date:** 2026-08-27 · **Status:** active
+**Decision:** `ROADMAP.md` Phase 6, which said to profile before designing. Three changes came
+out of the measurements, and one deliberate non-change.
+1. `geojson.area_measurements` reads only QuPath's area field instead of building a frame of all
+   ~100 measurements to get one column: 0.28 s and a 170 MB transient down to 0.16 s and no
+   measurable allocation, with identical results (0.6535 µm/px over 8537 objects, 0.66% spread).
+2. `selection.select`, `class_statistics` and `pixel_size_qc` are cached in the UI layer. Streamlit
+   re-executes the whole script on every widget change, and selecting from 150 000 shapes costs
+   1.40 s — without caching, nudging any unrelated control re-ran the entire selection.
+   `class_statistics` was additionally being computed twice per rerun.
+3. Cache keys are explicit tuples, never the GeoDataFrame: Streamlit would hash 150 000 rows on
+   every rerun, costing what the cache saves. The shape fingerprint is
+   `(file name, row count, sorted class names)`; the class names are load-bearing because
+   exploding a class rewrites them in place, so a filename alone would serve a stale selection.
+**The non-change:** nothing breaks at 150 000 shapes — 1.94 s uncached per rerun, 15 s per export,
+936 MB. No downsampling, streaming or chunking was added, because the profile does not justify it
+and speculative machinery would be harder to reason about than the problem it solves.
+**What the profile revealed that was not expected:** the footprint is libraries, not data. The
+83.7 MB GeoJSON adds 77 MB; the frame is 39 MB. The largest single item is the numba/umap JIT
+behind the greedy solver — about **354 MB, paid once per process on the first export**, against
+33 MB for hilbert. That is a consequence of 047 worth Jose knowing about, since it lands on a
+free-tier deployment; it is recorded rather than acted on, because the default is his call.
+**Verified:** 6 checks that the caches hit on repeated reruns and invalidate on a changed seed,
+changed replicates, an exploded class and a different file. All other suites and the golden
+harness unaffected.

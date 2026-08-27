@@ -14,6 +14,37 @@ from qupath_to_lmd import budget, plate, plot, selection, stats, ui_shared
 from qupath_to_lmd.model import CLASS_NAME, plan_from_selection
 
 
+def _shape_fingerprint(gdf) -> tuple:
+    """A cheap identity for the working shapes, for cache keys.
+
+    Cannot be the filename alone: exploding a class rewrites the class names in place. Cannot
+    hash the frame itself either — Streamlit would walk 150 000 rows on every rerun, which is
+    what the cache is meant to avoid.
+    """
+    return (
+        st.session_state.get("file_name"),
+        len(gdf),
+        tuple(sorted(gdf[CLASS_NAME].dropna().unique())),
+    )
+
+
+@st.cache_data(show_spinner=False)
+def _cached_statistics(_gdf, cache_key: tuple, pixel_size_um: float | None):
+    """Per-class statistics, cached so a rerun does not recompute them (twice)."""
+    return stats.class_statistics(_gdf, pixel_size_um=pixel_size_um)
+
+
+@st.cache_data(show_spinner="Choosing shapes...")
+def _cached_selection(_gdf, _budgets, _mode, _params, cache_key: tuple, pixel_size_um):
+    """The selection, cached on everything that determines it.
+
+    Streamlit reruns the whole script on every widget change, and selecting from 150 000
+    shapes costs 1.4 s. Without this, adjusting an unrelated control re-runs the whole
+    selection (`decisions.md` 050).
+    """
+    return selection.select(_gdf, _budgets, _mode, _params, pixel_size_um=pixel_size_um)
+
+
 def class_selection_step(pixel_size_um: float | None, step: str = "5") -> list[str]:
     """Show what each class holds, then let the user choose which ones to collect."""
     gdf = st.session_state.gdf
@@ -32,7 +63,7 @@ def class_selection_step(pixel_size_um: float | None, step: str = "5") -> list[s
             "work in areas."
         )
 
-    table = stats.class_statistics(gdf, pixel_size_um=pixel_size_um)
+    table = _cached_statistics(gdf, _shape_fingerprint(gdf), pixel_size_um)
     display = stats.for_display(table)
     # Columns stay numeric so the table remains sortable; the format only trims the display.
     st.dataframe(
@@ -124,7 +155,8 @@ def budgets_step(selected: list[str], pixel_size_um: float | None, step: str = "
     )
 
     mode = _budget_mode(pixel_size_um)
-    table = stats.class_statistics(st.session_state.gdf, pixel_size_um=pixel_size_um)
+    gdf = st.session_state.gdf
+    table = _cached_statistics(gdf, _shape_fingerprint(gdf), pixel_size_um)
     supply = table.loc[selected, mode.stats_column]
 
     # Default to the whole class in a single replicate — the same thing the annotations
@@ -301,11 +333,19 @@ def selection_step(budgets, settings: dict, pixel_size_um: float | None, step: s
     params = _selection_params(step)
 
     mode = budget.BudgetMode(st.session_state.budget_mode or budget.BudgetMode.CELLS.value)
+    gdf = st.session_state.gdf
+    cache_key = (
+        _shape_fingerprint(gdf),
+        tuple((item.class_name, item.replicates, item.per_replicate) for item in budgets),
+        mode.value,
+        params.mode.value,
+        params.avoid_adjacent,
+        params.neighbour_distance_px,
+        params.seed,
+        pixel_size_um,
+    )
     try:
-        with st.spinner("Choosing shapes..."):
-            result = selection.select(
-                st.session_state.gdf, budgets, mode, params, pixel_size_um=pixel_size_um
-            )
+        result = _cached_selection(gdf, budgets, mode, params, cache_key, pixel_size_um)
     except ValueError as error:
         st.error(str(error))
         return
