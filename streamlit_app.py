@@ -55,12 +55,16 @@ logger.add(sys.stdout, colorize=True, format="<green>{time:HH:mm:ss.SS}</green> 
 ####################
 ### Introduction ###
 ####################
-st.markdown("""
-            # Turn QuPath shapes into a Laser Microdissection cutting file
-            ## Part of the [openDVP](https://github.com/CosciaLab/openDVP) framework
-            ### For help, post issue on [Github](https://github.com/CosciaLab/Qupath_to_LMD) with .geojson file and session id
-            """)
-st.write(f" Session id: {st.session_state.session_id}")
+st.markdown("# Turn QuPath shapes into a Laser Microdissection cutting file")
+st.markdown(
+    "[openDVP framework](https://github.com/CosciaLab/openDVP) · "
+    "[Report an issue](https://github.com/CosciaLab/Qupath_to_LMD/issues) · "
+    "[Glossary](https://github.com/CosciaLab/Qupath_to_LMD/blob/master/GLOSSARY.md)"
+)
+st.caption(
+    f"Session id `{st.session_state.session_id}` — include it, and your .geojson, when "
+    "reporting an issue."
+)
 st.divider()
 
 #################################
