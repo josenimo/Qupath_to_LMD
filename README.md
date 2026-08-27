@@ -5,6 +5,10 @@
 QuPath-to-LMD is the easiest way to go from QuPath annotations to LMD collection!
 With more than 60 unique users, we try to help everyone collect their tissues.
 
+One word per thing: the app calls everything it cuts a **shape**, reserves **object** for
+QuPath's own vocabulary, and uses **polygon** only for the geometry type. See
+[GLOSSARY.md](GLOSSARY.md) for the full set of terms.
+
 ## Qupath Annotations
 
 0. Create a Qupath Project (optional)
@@ -51,7 +55,7 @@ This is an example:
 }  
 ```
 Each "Class_name_" is the exact name of the class of annotation found in Qupath.
-The "C3", "C5", "C7" strings determine into which well are the contours going to be collected.
+The "C3", "C5", "C7" strings determine which well each class of shapes is collected into.
 Works for both 384-well plates and 96-well plates
 
 # Citation
@@ -100,9 +104,9 @@ For example:
 
 <img width="300" alt="bad_calibpoints" src="https://github.com/user-attachments/assets/887f7afc-fedb-438b-b00c-bbbd2a524f6f" />
 
-In this image the small contours at the top will likely suffer distortion leading the collection to be of different tissue than the one annotated for.
+In this image the small shapes at the top will likely suffer distortion, so the collection would be of different tissue than the one annotated for.
 
-The solution is to separate into two different sets of contours with closer calibration points:
+The solution is to separate into two sets of shapes, each with its own closer calibration points:
 ![better_calib_points_1](https://github.com/user-attachments/assets/4eb068b8-afbb-4cd7-9ed8-790dd7622950)
 ![better_calib_points_2](https://github.com/user-attachments/assets/6111132c-72dd-48fb-ae9f-0b04a01ede86)
 

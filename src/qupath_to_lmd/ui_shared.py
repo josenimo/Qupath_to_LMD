@@ -678,7 +678,7 @@ def _process(settings: dict, build_plan, tolerance: float, path_order) -> None:
         f"{len(plan.wells_used)} wells used."
     )
     _report_path(result, plan.pixel_size_um)
-    st.image(result.image_path, caption="Your Contours", width="content")
+    st.image(result.image_path, caption="The shapes that will be cut", width="content")
     st.success("All files have been processed and are ready for download.")
     logger.success("All files processed and zipped successfully")
 

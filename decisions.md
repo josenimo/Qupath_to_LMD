@@ -1011,3 +1011,33 @@ environment-dependent test is worse than no test, because it teaches people to i
 **Verified by breaking things on purpose:** inverting the Y flip fails two tests, one naming the
 transform and one naming all five differing artefacts; setting the neighbour distance to zero
 fails with an explanation of why strict intersection finds nothing on a real segmentation.
+
+## 059 — One word per thing: "shape" is what the laser cuts
+**Date:** 2026-08-27 · **Status:** active
+**Decision:** Round two, PR 2. **shape** is the app's term for one cuttable outline, everywhere —
+code, interface messages, docs. **object** is reserved for QuPath's vocabulary when discussing the
+input file. **polygon** means the geometry type only. **contour** is not used at all. `GLOSSARY.md`
+records these plus class, group, replicate, well, margin, collection, plan, calibration point,
+pixel size, smoothing tolerance, cutting order and neighbour, and is linked from `README.md` and
+`CLAUDE.md`.
+**Why "shape" and not one of the others:** it is what py-lmd calls them (`new_shape`,
+`Collection.shapes`), and py-lmd is what actually cuts; it was already the dominant term here; and
+it leaves the other two words free for the distinct meanings they genuinely carry. "Object" cannot
+be the app's term without colliding with QuPath's `objectType`, and "polygon" cannot without
+colliding with `MultiPolygon` and `LineString`.
+**What the survey found:** the rename was much smaller than planned. Of 39 uses of "object", almost
+all were already correct — they describe QuPath objects during reading, before they become shapes.
+Only two names were genuinely wrong (`POLYGON_LIMIT`, which counts shapes, and `plate_shape`, where
+a plate is not something the laser cuts), plus an image caption and three README lines using a
+**fourth** term nobody had mentioned: "contour". The app title was also ungrammatical — "Convert a
+GeoJSON polygons for Laser Microdissection" — and now reads "Turn QuPath shapes into a Laser
+Microdissection cutting file".
+**Made enforceable rather than aspirational:** `tests/test_nomenclature.py` fails if "contour"
+returns, if either old name comes back, if a canonical term is missing from the glossary, or if the
+glossary stops being linked. Verified by reintroducing "contour" and watching it fail. A convention
+that only lives in a document drifts back within a few PRs.
+**Deliberately left alone:** `objectType` and every `Polygon`/`MultiPolygon` geometry check, because
+those names come from QuPath and shapely and must match. Also `frame.shape`, which is pandas.
+**Noted, not fixed:** `README.md` still describes only the annotations workflow and never mentions
+cell segmentation. That is a real gap but it is a documentation rewrite, not a rename, and belongs
+in its own PR.

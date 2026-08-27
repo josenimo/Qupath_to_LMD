@@ -406,6 +406,23 @@ Initialised in the block at the top of `streamlit_app.py`. Any new key belongs h
   shapes and you cut the wrong tissue. README has worked examples.
 - `simplify(1)` tolerance is in image pixel units; it reduces vertex count for the LMD.
 
+## Vocabulary
+
+`GLOSSARY.md` is the reference; the rule is one word per thing (`decisions.md` 059).
+
+- **shape** — one outline the laser will cut. The app's term everywhere, and py-lmd's too.
+- **object** — QuPath's word, used only when discussing the input file, because QuPath's own
+  interface says annotation/cell/detection objects and its GeoJSON carries `objectType`. So
+  read-time messages say "objects" and everything downstream says "shapes".
+- **polygon** — the geometry type only, alongside `MultiPolygon` and `LineString`. Not a synonym
+  for shape.
+- **contour** — not used. It was a fourth name, in an image caption and the README.
+- Renamed for consistency: `plot.POLYGON_LIMIT` → `plot.SHAPE_LIMIT` (it counts shapes), and
+  `plate.plate_shape` → `plate.plate_dimensions` (a plate is not something the laser cuts).
+- `tests/test_nomenclature.py` enforces this: it fails if "contour" reappears, if the old names
+  come back, if a canonical term is missing from the glossary, or if the glossary stops being
+  linked from `README.md` and `CLAUDE.md`.
+
 ## Conventions in the code
 
 - **4-space indentation throughout.** The old 3-space style went out with `core.py` and
