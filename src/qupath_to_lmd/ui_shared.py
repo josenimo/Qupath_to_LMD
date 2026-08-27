@@ -577,14 +577,19 @@ def plate_preview(
     layout = plate.placement_dataframe(samples_and_wells, plate=plate_type)
     st.dataframe(layout.style.map(plate.highlight(set(samples_and_wells))), width="stretch")
 
-    used = sorted(samples_and_wells.values(), key=lambda w: (w[0], int(w[1:])))
+    taken = set(samples_and_wells.values())
+    used = sorted(taken, key=lambda well: (well[0], int(well[1:])))
     caption = f"{len(samples_and_wells)} wells in use on a {plate_type} well plate"
     if used:
         caption += f", {used[0]} to {used[-1]}"
         if wells:
-            remaining = [w for w in wells if w not in set(samples_and_wells)]
+            # Against the wells, not the group names — comparing with the dict's keys meant
+            # nothing ever matched and the "start at" always named the first usable well.
+            remaining = [well for well in wells if well not in taken]
             if remaining:
                 caption += f". For another slide into this plate, start at **{remaining[0]}**"
+            else:
+                caption += ". This plate is now full"
     st.caption(caption + ".")
 
     if wells:

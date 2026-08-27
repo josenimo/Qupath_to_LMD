@@ -304,3 +304,48 @@ def test_a_typed_scale_that_disagrees_with_the_file_is_warned_about(fake_streaml
     assert any("×" in w or "x what this file implies" in w for w in fake_streamlit.warnings), (
         f"A ten-fold disagreement should warn; warnings were {fake_streamlit.warnings}"
     )
+
+
+def test_the_plate_caption_names_a_well_that_is_actually_free(fake_streamlit, monkeypatch):
+    """It said "start at E7" while E7 was already in use.
+
+    The check compared the usable wells against the assignment's *keys* — the group names —
+    so nothing ever matched and it always named the first usable well. That is worse than no
+    advice: following it would overwrite the slide just collected.
+    """
+    captions = []
+    monkeypatch.setattr(streamlit, "caption", lambda *a, **k: captions.append(str(a[0]) if a else ""))
+    monkeypatch.setattr(streamlit, "download_button", lambda *a, **k: None)
+    monkeypatch.setattr(streamlit, "checkbox", lambda *a, **k: False)
+
+    wells = plate.acceptable_wells("384", margins=1)
+    groups = [f"slide1_r{i}" for i in range(1, 7)]
+    assignment = plate.assign_wells(groups, wells)
+
+    ui_shared.plate_preview(assignment, "384", wells=wells, key_suffix="test")
+
+    caption = " ".join(captions)
+    assert "start at" in caption, f"The caption gives no next well: {caption!r}"
+    suggested = caption.split("start at")[1].strip().strip("*.").split()[0].strip("*")
+    assert suggested not in set(assignment.values()), (
+        f"The caption suggests starting at {suggested}, which is already in use by "
+        f"{[g for g, w in assignment.items() if w == suggested]}. Following it would overwrite "
+        "the slide just collected."
+    )
+    assert suggested in wells, f"{suggested} is not one of the usable wells."
+
+
+def test_a_full_plate_says_so_rather_than_naming_a_well(fake_streamlit, monkeypatch):
+    """With no wells left there is no honest answer to "where next", so it must not invent one."""
+    captions = []
+    monkeypatch.setattr(streamlit, "caption", lambda *a, **k: captions.append(str(a[0]) if a else ""))
+    monkeypatch.setattr(streamlit, "download_button", lambda *a, **k: None)
+    monkeypatch.setattr(streamlit, "checkbox", lambda *a, **k: False)
+
+    wells = ["B2", "B3"]
+    assignment = plate.assign_wells(["a", "b"], wells)
+    ui_shared.plate_preview(assignment, "384", wells=wells, key_suffix="full")
+
+    caption = " ".join(captions)
+    assert "full" in caption, f"A plate with no free wells should say so; caption was {caption!r}"
+    assert "start at" not in caption, "A full plate must not suggest a well to start at."
