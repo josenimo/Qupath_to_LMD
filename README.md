@@ -52,6 +52,13 @@ Both workflows let you set the smoothing tolerance and the cutting order, and bo
 same bundle: the `.xml` for the LMD, the plate scheme, a QC image, your processed `.geojson`,
 and a log.
 
+### The cell segmentation workflow, end to end
+
+![Choosing cells and exporting a cutting file](assets/webapp_cells_workflow.gif)
+
+A real QuPath export of 14,145 shapes, 8,537 of them classified cells: choose the classes, set
+replicates and amounts, lay out the plate, check which cells were picked, and download the `.xml`.
+
 # Youtube Tutorials
 
 ## Introduction to Qupath-to-LMD Version4
