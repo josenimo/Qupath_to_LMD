@@ -132,3 +132,85 @@ def test_a_negative_scale_is_rejected(cells_gdf):
     """A negative scale would silently produce positive areas via the square."""
     with pytest.raises(ValueError, match="positive"):
         stats.class_statistics(cells_gdf, pixel_size_um=-1.0)
+
+
+def test_the_minimum_area_filter_removes_only_shapes_below_their_floor(cells_gdf):
+    """Microdissection cannot reliably collect below a certain area, whatever a budget asks for."""
+    table = stats.class_statistics(cells_gdf, pixel_size_um=CELLS_PIXEL_SIZE)
+    floors = dict.fromkeys(table.index, stats.DEFAULT_MINIMUM_AREA_UM2)
+    pool, excluded = stats.filter_by_minimum_area(cells_gdf, floors, CELLS_PIXEL_SIZE)
+
+    areas = pool.geometry.area * CELLS_PIXEL_SIZE**2
+    assert (areas >= stats.DEFAULT_MINIMUM_AREA_UM2).all(), (
+        f"{int((areas < stats.DEFAULT_MINIMUM_AREA_UM2).sum())} shapes below the floor survived "
+        "the filter, so an uncollectable shape could still be sent to the laser."
+    )
+    assert len(pool) + int(excluded.sum()) == len(cells_gdf), (
+        f"{len(cells_gdf)} shapes in, {len(pool)} kept and {int(excluded.sum())} excluded — "
+        "the filter is losing shapes it does not account for."
+    )
+
+
+def test_filtering_changes_what_a_class_can_supply(cells_gdf):
+    """The whole point: figures computed after the filter describe collectable tissue.
+
+    If statistics were computed before it, the user would be shown an amount they cannot have.
+    """
+    floors = dict.fromkeys(set(cells_gdf["classification_name"]), stats.DEFAULT_MINIMUM_AREA_UM2)
+    pool, excluded = stats.filter_by_minimum_area(cells_gdf, floors, CELLS_PIXEL_SIZE)
+    before = stats.class_statistics(cells_gdf, pixel_size_um=CELLS_PIXEL_SIZE)
+    after = stats.class_statistics(pool, pixel_size_um=CELLS_PIXEL_SIZE)
+
+    assert excluded.sum() > 0, (
+        "Fixture assumption broken: expected the demo file to have shapes below 100 µm²."
+    )
+    shrunk = [name for name in after.index if after.at[name, "shapes"] < before.at[name, "shapes"]]
+    assert shrunk, "No class lost any shapes, so the filter had no effect on the reported supply."
+    for name in shrunk:
+        assert after.at[name, "area_median_um2"] >= before.at[name, "area_median_um2"], (
+            f"Class {name!r} lost its smallest shapes but its median area fell, which cannot happen."
+        )
+
+
+def test_a_per_class_floor_only_affects_that_class(cells_gdf):
+    """Different biologies have different sizes, which is why the floor is per class."""
+    classes = sorted(set(cells_gdf["classification_name"]))
+    floors = dict.fromkeys(classes, 0.0)
+    floors[classes[0]] = 1e9  # nothing in that class can survive
+
+    pool, excluded = stats.filter_by_minimum_area(cells_gdf, floors, CELLS_PIXEL_SIZE)
+    assert (pool["classification_name"] == classes[0]).sum() == 0, (
+        f"An impossible floor on {classes[0]!r} left shapes behind."
+    )
+    for other in classes[1:]:
+        kept = (pool["classification_name"] == other).sum()
+        original = (cells_gdf["classification_name"] == other).sum()
+        assert kept == original, (
+            f"A floor on {classes[0]!r} removed {original - kept} shapes from {other!r}. "
+            "Floors must be per class."
+        )
+
+
+def test_a_zero_floor_keeps_everything(cells_gdf):
+    floors = dict.fromkeys(set(cells_gdf["classification_name"]), 0.0)
+    pool, excluded = stats.filter_by_minimum_area(cells_gdf, floors, CELLS_PIXEL_SIZE)
+    assert len(pool) == len(cells_gdf) and excluded.sum() == 0
+
+
+def test_no_scale_means_no_filtering(cells_gdf):
+    """A floor in µm² is meaningless without a scale, so nothing is dropped rather than
+    dropping shapes against a number that means nothing."""
+    floors = dict.fromkeys(set(cells_gdf["classification_name"]), stats.DEFAULT_MINIMUM_AREA_UM2)
+    pool, excluded = stats.filter_by_minimum_area(cells_gdf, floors, None)
+    assert len(pool) == len(cells_gdf), (
+        "Shapes were filtered without an image scale, so they were compared against a µm² "
+        "figure that could not be computed."
+    )
+    assert excluded.sum() == 0
+
+
+def test_the_default_floor_is_the_agreed_figure():
+    assert stats.DEFAULT_MINIMUM_AREA_UM2 == 100.0, (
+        f"The default minimum collectable area is {stats.DEFAULT_MINIMUM_AREA_UM2}, not the "
+        "agreed 100 µm² (decisions.md 060)."
+    )

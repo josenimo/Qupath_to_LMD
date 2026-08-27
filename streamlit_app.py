@@ -25,6 +25,7 @@ DEFAULTS = {
     "selected_classes": None,
     "budget_mode": None,
     "budgets": None,
+    "minimum_area_um2": None,
     "saw": None,
     "use_plate_wells": True,
     "file_name": None,

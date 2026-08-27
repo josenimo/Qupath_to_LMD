@@ -1041,3 +1041,29 @@ those names come from QuPath and shapely and must match. Also `frame.shape`, whi
 **Noted, not fixed:** `README.md` still describes only the annotations workflow and never mentions
 cell segmentation. That is a real gap but it is a documentation rewrite, not a rename, and belongs
 in its own PR.
+
+## 060 — A per-class minimum collectable area, applied before anything is measured
+**Date:** 2026-08-27 · **Status:** active · supersedes the global floor removed in 034
+**Decision:** Each class gets a **minimum area in µm², default 100** — Jose's figure, on the
+grounds that collecting less tissue than that reliably is very difficult. It is a **filter**, and
+it runs **before** statistics, feasibility and selection.
+**Why the ordering is the whole point:** Jose was explicit that the filter applies pre-measurement,
+so the figures show available area *after* filtering. That makes "available" mean *collectable*.
+The opposite ordering would show a user an amount they cannot have, which is precisely the class of
+error this app exists to prevent. Concretely: filter, then per-class statistics on what survives,
+then feasibility against those figures, then select from the filtered pool.
+**Why per class:** 034 removed a global floor with the note that it belonged per class alongside
+the budgets, because different biologies genuinely differ in size. On the real export at
+0.6535 µm/px, `Immune cells` has a median of 87.7 µm² and `Tumor` 142.8 — one number cannot be
+right for both.
+**Details:** the suggested per-replicate amounts are computed from the post-default-floor pool, so
+they do not describe shapes that are about to be filtered out. Zero disables the filter for a
+class. Without an image scale nothing is filtered and the column is hidden, because a µm² floor
+cannot be evaluated — the editor says so rather than silently doing nothing. The plan is still
+built from the whole frame so filtered and unselected shapes stay reportable. Floors are recorded
+per class in `provenance.json`.
+**Measured:** on `Single_cells.geojson` a 100 µm² floor excludes 21 of 121 shapes and lifts the
+surviving median from 157 to 170 µm².
+**Still open** (`ROADMAP.md` round-two question 2): whether one default across biologies is right.
+It is wrong for `Immune cells` on the real export, and a default that is wrong for most classes
+trains users to change it, which defeats the purpose.

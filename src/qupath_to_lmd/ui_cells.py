@@ -28,6 +28,15 @@ def _shape_fingerprint(gdf) -> tuple:
     )
 
 
+MINIMUM_AREA_COLUMN = "Minimum area (µm²)"
+
+
+@st.cache_data(show_spinner=False)
+def _filtered_statistics(_pool, floors: tuple, pixel_size_um: float | None):
+    """Statistics for the post-filter pool, cached on the floors that produced it."""
+    return stats.class_statistics(_pool, pixel_size_um=pixel_size_um)
+
+
 @st.cache_data(show_spinner=False)
 def _cached_statistics(_gdf, cache_key: tuple, pixel_size_um: float | None):
     """Per-class statistics, cached so a rerun does not recompute them (twice)."""
@@ -174,34 +183,60 @@ def budgets_step(selected: list[str], step: str = "5") -> tuple[list[budget.Clas
 
     mode, pixel_size_um = _budget_mode()
     gdf = st.session_state.gdf
-    table = _cached_statistics(gdf, _shape_fingerprint(gdf), pixel_size_um)
-    supply = table.loc[selected, mode.stats_column]
+
+    # The minimum area applies before anything is measured, so the suggested amounts start from
+    # the pool that survives the default floor — otherwise they describe shapes that will be
+    # filtered out a moment later (`decisions.md` 060).
+    default_floor = stats.DEFAULT_MINIMUM_AREA_UM2 if pixel_size_um else 0.0
+    default_floors = dict.fromkeys(selected, default_floor)
+    pool, _excluded = stats.filter_by_minimum_area(gdf, default_floors, pixel_size_um)
+    table = _filtered_statistics(pool, tuple(sorted(default_floors.items())), pixel_size_um)
+    supply = table.reindex(selected)[mode.stats_column].fillna(0)
 
     # Default to the whole class in a single replicate — the same thing the annotations
     # workflow would do — so the starting point is neutral rather than an invented number.
-    editable = pandas.DataFrame(
-        {
-            budget.DISPLAY_COLUMNS[budget.REPLICATES]: 1,
-            budget.DISPLAY_COLUMNS[budget.PER_REPLICATE]: supply.round(stats.DECIMALS),
-        },
-        index=supply.index,
-    )
+    columns = {
+        budget.DISPLAY_COLUMNS[budget.REPLICATES]: 1,
+        budget.DISPLAY_COLUMNS[budget.PER_REPLICATE]: supply.round(stats.DECIMALS),
+    }
+    if pixel_size_um:
+        columns[MINIMUM_AREA_COLUMN] = default_floor
+    editable = pandas.DataFrame(columns, index=supply.index)
+
     # A key tied to the selection and mode, so changing either gives a fresh editor rather
     # than leaving rows from the previous one behind.
     signature = hashlib.md5(("|".join(sorted(selected)) + mode.value).encode()).hexdigest()[:8]
+    editor_config = {
+        budget.DISPLAY_COLUMNS[budget.REPLICATES]: st.column_config.NumberColumn(
+            budget.DISPLAY_COLUMNS[budget.REPLICATES], min_value=1, step=1, format="%d"
+        ),
+        budget.DISPLAY_COLUMNS[budget.PER_REPLICATE]: st.column_config.NumberColumn(
+            f"Per replicate ({mode.unit})", min_value=0.0, format=f"%.{stats.DECIMALS}f"
+        ),
+    }
+    if pixel_size_um:
+        editor_config[MINIMUM_AREA_COLUMN] = st.column_config.NumberColumn(
+            MINIMUM_AREA_COLUMN,
+            min_value=0.0,
+            step=10.0,
+            format=f"%.{stats.DECIMALS}f",
+            help=(
+                "Shapes smaller than this are left out before anything is counted, so every "
+                "figure below describes tissue you can actually collect. Different biologies "
+                "differ in size, so this is per class. Zero keeps everything."
+            ),
+        )
     edited = st.data_editor(
-        editable,
-        width="stretch",
-        key=f"budget_editor_{signature}",
-        column_config={
-            budget.DISPLAY_COLUMNS[budget.REPLICATES]: st.column_config.NumberColumn(
-                budget.DISPLAY_COLUMNS[budget.REPLICATES], min_value=1, step=1, format="%d"
-            ),
-            budget.DISPLAY_COLUMNS[budget.PER_REPLICATE]: st.column_config.NumberColumn(
-                f"Per replicate ({mode.unit})", min_value=0.0, format=f"%.{stats.DECIMALS}f"
-            ),
-        },
+        editable, width="stretch", key=f"budget_editor_{signature}", column_config=editor_config
     )
+
+    floors = (
+        {str(name): float(row.get(MINIMUM_AREA_COLUMN) or 0.0) for name, row in edited.iterrows()}
+        if pixel_size_um
+        else dict.fromkeys(selected, 0.0)
+    )
+    pool, excluded = stats.filter_by_minimum_area(gdf, floors, pixel_size_um)
+    table = _filtered_statistics(pool, tuple(sorted(floors.items())), pixel_size_um)
 
     budgets = [
         budget.ClassBudget(
@@ -212,10 +247,40 @@ def budgets_step(selected: list[str], step: str = "5") -> tuple[list[budget.Clas
         for class_name, row in edited.iterrows()
     ]
 
+    _report_minimum_area(excluded, floors, len(gdf), pixel_size_um)
     _report_feasibility(table, budgets, mode)
+
     st.session_state.budget_mode = mode.value
     st.session_state.budgets = [vars(item) for item in budgets]
-    return budgets, pixel_size_um
+    st.session_state.minimum_area_um2 = floors
+    return budgets, pixel_size_um, pool
+
+
+def _report_minimum_area(excluded, floors: dict, total: int, pixel_size_um: float | None) -> None:
+    """Say how much each class lost to its floor, before the user commits to an amount."""
+    if not pixel_size_um:
+        st.caption(
+            "A minimum collectable area needs the image scale, so no size filter is applied. "
+            "Enter a scale above to set one."
+        )
+        return
+
+    dropped = int(excluded.sum())
+    if not dropped:
+        st.caption("No shapes fall below their minimum area.")
+        return
+
+    lines = "\n".join(
+        f"- **{name}**: {int(count)} shapes below {floors.get(name, 0):g} µm²"
+        for name, count in excluded.items()
+        if count
+    )
+    st.warning(
+        f"**{dropped} of {total:,} shapes are too small to collect and have been left out** "
+        "before anything below was counted, so the figures describe collectable tissue only.\n\n"
+        f"{lines}\n\n"
+        "Lower a class's minimum area if you disagree, or set it to zero to keep everything."
+    )
 
 
 def _report_feasibility(table: pandas.DataFrame, budgets: list[budget.ClassBudget], mode: budget.BudgetMode) -> None:
@@ -346,7 +411,7 @@ def _selection_params(step: str) -> selection.SelectionParams:
 
 
 @st.fragment
-def selection_step(budgets, settings: dict, pixel_size_um: float | None, step: str = "8") -> None:
+def selection_step(budgets, settings: dict, pixel_size_um: float | None, pool, step: str = "7") -> None:
     """Choose the shapes, preview them, and offer the export.
 
     A fragment, so changing the mode, the seed or the neighbour distance reruns only this step
@@ -358,9 +423,13 @@ def selection_step(budgets, settings: dict, pixel_size_um: float | None, step: s
     params = _selection_params(step)
 
     mode = budget.BudgetMode(st.session_state.budget_mode or budget.BudgetMode.CELLS.value)
-    gdf = st.session_state.gdf
+    # The pool, not the whole file: shapes below their class's minimum area were removed before
+    # anything was measured, so selecting from the full frame would hand back shapes the user
+    # was already told are too small to collect (`decisions.md` 060).
+    gdf = pool
     cache_key = (
         _shape_fingerprint(gdf),
+        tuple(sorted((st.session_state.minimum_area_um2 or {}).items())),
         tuple((item.class_name, item.replicates, item.per_replicate) for item in budgets),
         mode.value,
         params.mode.value,
@@ -414,7 +483,7 @@ def _report_selection(result: selection.SelectionResult, mode: budget.BudgetMode
 
 
 def _preview_selection(result: selection.SelectionResult) -> None:
-    """Draw what will be cut, coloured by replicate."""
+    """Draw what will be cut, coloured by replicate, over every shape in the file."""
     labels = result.replicate_of.map(lambda value: f"replicate {int(value)}" if pandas.notna(value) else None)
     with st.spinner("Drawing the selection..."):
         figure = plot.plot_shapes(
@@ -433,8 +502,9 @@ def _preview_selection(result: selection.SelectionResult) -> None:
 def _export_selection(result, settings: dict, params: selection.SelectionParams, pixel_size_um) -> None:
     """Assign wells, build the plan, and hand off to the shared export step."""
     plan, samples_and_wells = plan_from_selection(
+        # The whole file, so shapes that were filtered out or not selected stay reportable.
         gdf=st.session_state.gdf,
-        replicate_of=result.replicate_of,
+        replicate_of=result.replicate_of.reindex(st.session_state.gdf.index),
         wells=settings["wells"],
         samples_and_wells=settings.get("samples_and_wells"),
         calibration_names=st.session_state.calibs,
@@ -453,6 +523,7 @@ def _export_selection(result, settings: dict, params: selection.SelectionParams,
             "neighbour_distance_px": params.neighbour_distance_px,
             "seed": params.seed,
             "budget_mode": st.session_state.budget_mode,
+            "minimum_area_um2": st.session_state.minimum_area_um2,
             "budgets": st.session_state.budgets,
         },
     )
@@ -482,10 +553,10 @@ def render(uploaded_file) -> None:
     overview_step(selected)
     st.divider()
 
-    budgets, pixel_size = budgets_step(selected, step="5")
+    budgets, pixel_size, pool = budgets_step(selected, step="5")
     st.divider()
 
     settings = capacity_step(budgets, step="6")
     st.divider()
 
-    selection_step(budgets, settings, pixel_size, step="7")
+    selection_step(budgets, settings, pixel_size, pool, step="7")

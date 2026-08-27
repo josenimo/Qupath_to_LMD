@@ -275,6 +275,24 @@ categoricals × replicate count, cycling 6 hard-coded colours as Java signed int
 - The `st.data_editor` key is an md5 of the sorted class selection plus the mode, so changing
   either gives a fresh editor instead of leaving stale rows behind.
 
+## Minimum collectable area
+
+- `stats.filter_by_minimum_area(gdf, floors, pixel_size_um)` drops shapes below their class's
+  floor and returns the survivors plus the count excluded per class. Default
+  `stats.DEFAULT_MINIMUM_AREA_UM2` is **100 µm²**, per class because different biologies differ
+  in size (`decisions.md` 060).
+- **Applied before anything is measured.** The order is: filter, then per-class statistics, then
+  feasibility, then selection. So "available" in the feasibility table means *collectable*.
+  Filtering afterwards would show the user an amount they cannot have.
+- The selection draws from the filtered pool, not the whole frame. The plan is still built from
+  the whole frame so filtered and unselected shapes stay reportable, with `replicate_of` reindexed
+  onto it.
+- Without a scale nothing is filtered, because a µm² floor cannot be evaluated — and the editor
+  hides the column and says why.
+- On `Single_cells.geojson` a 100 µm² floor excludes 21 of 121 shapes and lifts the surviving
+  median from 157 to 170 µm².
+- Recorded per class in `provenance.json`.
+
 ## Selection engine (Phase 4)
 
 - `selection.select(gdf, budgets, budget_mode, params, pixel_size_um)` returns a
@@ -390,6 +408,7 @@ Initialised in the block at the top of `streamlit_app.py`. Any new key belongs h
 | `selected_classes` | classes the cell workflow will collect; `None` means not chosen yet |
 | `budget_mode` | `'cells'` \| `'area'` — what the per-replicate amount counts |
 | `budgets` | list of `ClassBudget` as dicts: class, replicates, per-replicate amount |
+| `minimum_area_um2` | per-class minimum collectable area in µm²; drives the pre-measurement filter |
 | `view_mode` | `'default'` \| `'samples'` — which plate table is rendered |
 | `gdf` | the working GeoDataFrame (points removed, `classification_name` added) |
 | `geojson_report` | `GeojsonReport` from the last read, re-rendered on every rerun |
