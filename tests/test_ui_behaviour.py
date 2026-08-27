@@ -243,3 +243,64 @@ def test_the_shape_fingerprint_changes_when_classes_are_exploded(fake_streamlit,
     )
     fake_streamlit.state.file_name = "b.geojson"
     assert ui_cells._shape_fingerprint(cells_gdf) != before, "A different file gave the same fingerprint."
+
+
+def test_the_scale_is_estimated_when_the_file_allows_it(fake_streamlit):
+    """The estimate has been right on every file where it could be computed, and the input was
+    the step users stumbled on. So where measurements exist the app uses them and says so."""
+    _load(fake_streamlit, "demo_Qupath_project/Single_cells.geojson")
+    fake_streamlit.state.pixel_size_um = None
+
+    value, source = ui_shared.resolve_pixel_size()
+    assert source == "estimated", (
+        f"This file carries QuPath measurements, so the scale should be estimated; got {source!r}."
+    )
+    assert value == pytest.approx(0.3467, abs=5e-4), f"Estimated scale came out as {value}."
+
+
+def test_a_typed_scale_overrides_the_estimate(fake_streamlit):
+    """The estimate is a default, not a decision the app makes for the user."""
+    _load(fake_streamlit, "demo_Qupath_project/Single_cells.geojson")
+    fake_streamlit.state.pixel_size_um = 0.5
+
+    value, source = ui_shared.resolve_pixel_size()
+    assert (value, source) == (0.5, "entered"), (
+        f"A typed scale must win over the estimate; resolver returned {value} from {source!r}."
+    )
+
+
+def test_no_scale_is_available_for_a_file_without_measurements(fake_streamlit):
+    """Annotation exports carry no areas, so there is nothing to estimate from and the app must
+    fall back to asking rather than guessing."""
+    _load(fake_streamlit, "demo_Qupath_project/TD_01_verysmall_mIF.geojson")
+    fake_streamlit.state.pixel_size_um = None
+
+    value, source = ui_shared.resolve_pixel_size()
+    assert (value, source) == (None, "none"), (
+        f"With no measurements there is nothing to estimate; resolver returned {value} from {source!r}."
+    )
+
+
+def test_a_wide_implied_spread_is_warned_about(fake_streamlit):
+    """A scale that disagrees between objects suggests the export mixes images or was rescaled,
+    which makes every area suspect."""
+    _load(fake_streamlit, "demo_Qupath_project/Single_cells.geojson")
+    report = fake_streamlit.state.geojson_report
+    report.pixel_size_spread = ui_shared.WIDE_SPREAD * 2
+
+    ui_shared._report_pixel_size(0.3467, "estimated", 0.3467, report)
+    assert any("varies by" in w for w in fake_streamlit.warnings), (
+        f"A {report.pixel_size_spread:.0%} spread should be warned about; warnings were "
+        f"{fake_streamlit.warnings}"
+    )
+
+
+def test_a_typed_scale_that_disagrees_with_the_file_is_warned_about(fake_streamlit):
+    """A 2x error in scale is a 4x error in every area, so this is worth interrupting for."""
+    _load(fake_streamlit, "demo_Qupath_project/Single_cells.geojson")
+    report = fake_streamlit.state.geojson_report
+
+    ui_shared._report_pixel_size(3.467, "entered", report.implied_pixel_size_um, report)
+    assert any("×" in w or "x what this file implies" in w for w in fake_streamlit.warnings), (
+        f"A ten-fold disagreement should warn; warnings were {fake_streamlit.warnings}"
+    )

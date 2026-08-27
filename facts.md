@@ -129,8 +129,8 @@ are shared, then the router dispatches to one of two workflows.
 
 **Shared:** 1 upload + QC · 2 workflow choice · 3 calibration points.
 **Legacy then continues:** 4 optional class split · 5 plate layout · 6 process and download.
-**Cells then continues:** 4 image scale (optional) · 5 class statistics and selection ·
-6 replicates and budgets · 7 plate and capacity · 8 selection with preview · 9 export.
+**Cells then continues:** 4 class statistics and selection · 5 replicates, budgets and image
+scale · 6 plate and capacity · 7 selection with preview · 8 export.
 Both workflows reach a downloadable collection, and both share the same export parameters.
 
 Step numbers are passed into the `ui_shared` step functions rather than hard-coded, because
@@ -202,6 +202,16 @@ categoricals × replicate count, cycling 6 hard-coded colours as Java signed int
   annotations suggests the cell workflow, otherwise annotations. It is a **suggestion** —
   the radio is always user-changeable, and legacy is the default before any file is loaded.
   Verified on both demo files (`Single_cells.geojson` → cells, `TD_01…` → legacy).
+- **The scale is estimated, not asked for, wherever the file allows it** (`decisions.md` 056).
+  `ui_shared.resolve_pixel_size()` returns the value and its source: a typed override wins,
+  otherwise the value derived from QuPath's own measurements when the file was read, otherwise
+  nothing. The class table just shows areas without the user entering anything.
+- `ui_shared.pixel_size_control()` is a compact input that sits **beside the area budget
+  control**, not in a step of its own — that is the only thing the scale feeds, and users were
+  confused about why it was being asked for (`decisions.md` 057). It reports where the value came
+  from, warns when a typed value disagrees with the file by more than 5%, and warns when the
+  implied scale varies between objects by more than `WIDE_SPREAD` (2%), which suggests a mixed or
+  rescaled export.
 - Beside the µm/px input sits a reference table from `stats.reference_pixel_sizes()`:
   objectives 4×–63× against two sensor pitches (3.45 and 6.5 µm), each cell being
   `pitch / magnification`. Its purpose is to make the **spread visible** — the 20× row alone

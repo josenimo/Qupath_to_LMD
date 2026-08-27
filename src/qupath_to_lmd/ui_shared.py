@@ -23,6 +23,10 @@ PIXEL_SIZE_FORMAT = f"%.{PIXEL_SIZE_DECIMALS}f"
 PIXEL_SIZE_MIN = PIXEL_SIZE_STEP
 PIXEL_SIZE_MAX = 100.0
 
+# Above this, the scale implied by different objects disagrees enough to suggest the export
+# mixes images or was rescaled.
+WIDE_SPREAD = 0.02
+
 # Where the hosted app stops being comfortable. 40 000 shapes is about the most a TMA core
 # yields, so anything much beyond it is whole-slide territory. Figures are measured, not
 # guessed — see `facts.md` and `decisions.md` 051.
@@ -255,102 +259,101 @@ def calibration_step(step: str = "3"):
         )
 
 
-def pixel_size_step(step: str = "4") -> float | None:
-    """Ask for µm per pixel and cross-check it against QuPath's own area measurements.
+def resolve_pixel_size() -> tuple[float | None, str]:
+    """The scale in force, and where it came from.
 
-    Optional (`decisions.md` 038): without it, only shape counts and cell-count budgets are
-    available. Required before any *area* figure is shown (`decisions.md` 011). The entered
-    value is never overwritten by the implied one — a mismatch is reported and the user decides.
+    An override the user typed wins; otherwise the value QuPath's own area measurements imply,
+    derived once when the file was read. Returns `(None, "none")` when neither is available —
+    which is normal, because most exports carry no measurements and a user collecting a number
+    of cells never needs a scale (`decisions.md` 038, 056).
     """
-    if st.session_state.gdf is None:
-        return None
+    override = st.session_state.pixel_size_um
+    if override:
+        return float(override), "entered"
 
-    st.markdown(f"## Step {step} (optional): Image scale")
-    st.markdown(
-        "How many micrometres does one pixel of your image cover? QuPath shows this in "
-        "*Image → Image properties → Pixel width*.\n\n"
-        "**Only needed if you want to work in areas.** If you intend to collect a number of "
-        "cells, skip this. Every area figure in the app is computed from this number, so a "
-        "wrong value gives you a correct-looking collection of the wrong amount of tissue — "
-        "which is why it is better left blank than guessed."
+    report = st.session_state.geojson_report
+    if report is not None and report.implied_pixel_size_um:
+        return float(report.implied_pixel_size_um), "estimated"
+
+    return None, "none"
+
+
+def pixel_size_control() -> float | None:
+    """A compact scale input, to sit beside whatever needs a scale.
+
+    Deliberately not a step of its own: users were confused about why the app wanted a pixel
+    size at all. Next to the control that turns amounts into areas, it explains itself, because
+    that is the only thing it feeds (`decisions.md` 057).
+    """
+    current, source = resolve_pixel_size()
+    report = st.session_state.geojson_report
+    estimate = report.implied_pixel_size_um if report is not None else None
+
+    entered = st.number_input(
+        "Image scale (µm per pixel)",
+        min_value=PIXEL_SIZE_MIN,
+        max_value=PIXEL_SIZE_MAX,
+        value=float(current) if current else None,
+        step=PIXEL_SIZE_STEP,
+        format=PIXEL_SIZE_FORMAT,
+        key="pixel_size_input",
+        placeholder="e.g. 0.3467",
+        help=(
+            "How many micrometres one image pixel covers. It is needed only to express amounts "
+            "as areas — collecting a number of shapes does not need it at all.\n\n"
+            "Where to find it: QuPath, *Image → Image properties → Pixel width*.\n\n"
+            "If your file carries QuPath measurements, this is filled in from them and you can "
+            "leave it alone. Magnification does **not** determine pixel size — it is your "
+            "camera's sensor pitch divided by the total magnification, so the same 20× objective "
+            f"spans roughly {stats.SENSOR_PITCHES_UM[0] / 20:.2f}–{stats.SENSOR_PITCHES_UM[-1] / 20:.2f} "
+            "µm/px across common cameras."
+        ),
     )
 
-    # Three things matter for this input to behave:
-    #  - value=None starts it genuinely empty and returns None until the user types, so
-    #    there is no 0.0 sentinel to confuse with a real entry.
-    #  - value= is NOT re-passed on later reruns: with key= set, the widget's own state is
-    #    the source of truth, and re-passing value fights it and snaps the field back.
-    #  - step must match the displayed precision. The rendered HTML input carries
-    #    step as an attribute and browsers snap off-grid entries to it, so a coarser step
-    #    than the format turns a typed 0.3467 into 0.35.
-    input_column, reference_column = st.columns([2, 3])
+    if entered:
+        st.session_state.pixel_size_um = float(entered)
+    elif source == "estimated":
+        st.session_state.pixel_size_um = None
 
-    with input_column:
-        entered = st.number_input(
-            "Micrometres per pixel (µm/px)",
-            min_value=PIXEL_SIZE_MIN,
-            max_value=PIXEL_SIZE_MAX,
-            value=None,
-            step=PIXEL_SIZE_STEP,
-            format=PIXEL_SIZE_FORMAT,
-            key="pixel_size_input",
-            placeholder="e.g. 0.3467",
-            help=(
-                f"Accepted to {PIXEL_SIZE_DECIMALS} decimal places, between {PIXEL_SIZE_MIN} and "
-                f"{PIXEL_SIZE_MAX:g} µm/px. Type the value directly — the arrows step by "
-                f"{PIXEL_SIZE_STEP:g}."
-            ),
-        )
+    value, source = resolve_pixel_size()
+    _report_pixel_size(value, source, estimate, report)
+    return value
 
-    with reference_column:
-        st.markdown("**If you only know the magnification**")
-        st.dataframe(stats.reference_pixel_sizes(), width="stretch")
-        st.warning(
-            "**Magnification does not tell you the pixel size.** Pixel size is your camera's "
-            "sensor pitch divided by the *total* magnification, so the same 20× objective can "
-            "differ by more than 2× between two microscopes — and any additional coupler or "
-            "zoom changes it again. Treat the table as a rough sanity check only, and get the "
-            "real number from QuPath under *Image → Image properties → Pixel width*."
-        )
 
-    if entered is None:
+def _report_pixel_size(value, source, estimate, report) -> None:
+    """Say where the scale came from, and flag a disagreement or a wide spread."""
+    if value is None:
         st.caption(
-            "Left blank. You can still collect by number of cells; areas and area budgets "
-            "stay unavailable until a scale is entered."
+            "No scale, so amounts are in numbers of shapes. Enter one to work in areas instead."
         )
-        return None
+        return
 
-    # The implied scale was computed once when the file was read, so this is free.
-    geojson_report = st.session_state.geojson_report
-    report = qc.compare_pixel_size(
-        entered,
-        geojson_report.implied_pixel_size_um,
-        geojson_report.n_area_measurements,
-        geojson_report.pixel_size_spread,
-    )
-    if report.implied_um_per_px is None:
-        # Measurements are optional on export and most files will not have them, so this is
-        # the normal case. Stating it quietly keeps the real warnings worth reading.
+    if source == "estimated":
         st.caption(
-            "This file carries no QuPath measurements, so the value could not be "
-            "cross-checked automatically. Nothing else needs them."
+            f"Estimated from this file's own QuPath measurements across "
+            f"{report.n_area_measurements:,} objects (spread {report.pixel_size_spread:.1%}). "
+            "Type over it if you know better."
         )
-    elif report.is_concerning:
-        st.warning(
-            f"Your value is **{report.ratio:.2f}×** what this file implies. QuPath's own area "
-            f"measurements across {report.n_objects_checked} objects imply "
-            f"**{report.implied_um_per_px:.4f} µm/px**. One of the two is wrong — most often "
-            "this is a pixel size read from the wrong image or a factor-of-ten slip. "
-            "You can continue if you are sure."
-        )
+    elif estimate:
+        check = qc.compare_pixel_size(value, estimate, report.n_area_measurements, report.pixel_size_spread)
+        if check.is_concerning:
+            st.warning(
+                f"Your value is **{check.ratio:.2f}×** what this file implies "
+                f"({estimate:.4f} µm/px from {report.n_area_measurements:,} objects). One of the "
+                "two is wrong — usually a scale read from the wrong image, or a factor-of-ten "
+                "slip. A 2× error in scale is a 4× error in every area."
+            )
+        else:
+            st.caption(f"Agrees with this file's own measurements ({estimate:.4f} µm/px).")
     else:
-        st.success(
-            f"Cross-checked against {report.n_objects_checked} objects: this file implies "
-            f"{report.implied_um_per_px:.4f} µm/px (spread {report.relative_spread * 100:.2f}%)."
-        )
+        st.caption("This file carries no measurements, so the value could not be cross-checked.")
 
-    st.session_state.pixel_size_um = entered
-    return entered
+    if report is not None and report.pixel_size_spread and report.pixel_size_spread > WIDE_SPREAD:
+        st.warning(
+            f"The scale implied by this file varies by {report.pixel_size_spread:.1%} between "
+            "objects. That usually means the export mixes images, or was rescaled — worth "
+            "checking before relying on any area."
+        )
 
 
 def plate_settings_step(step: str = "5") -> dict:

@@ -50,17 +50,23 @@ def class_selection_step(pixel_size_um: float | None, step: str = "5") -> list[s
     gdf = st.session_state.gdf
 
     st.markdown(f"## Step {step}: Choose which classes to collect")
-    if pixel_size_um:
+    _, source = ui_shared.resolve_pixel_size()
+    if pixel_size_um and source == "estimated":
         st.markdown(
-            "Areas below are computed from the shapes themselves and the image scale you "
-            "entered, so they are real areas of tissue. Use them to judge what is worth "
-            "collecting before deciding on amounts."
+            f"Areas are computed from the shapes themselves at **{pixel_size_um:.4f} µm/px**, "
+            "estimated from this file's own QuPath measurements. You can change the scale in "
+            "the next step if it is wrong."
+        )
+    elif pixel_size_um:
+        st.markdown(
+            f"Areas are computed from the shapes themselves at **{pixel_size_um:.4f} µm/px**, "
+            "the scale you entered."
         )
     else:
         st.markdown(
-            "Without an image scale only shape counts can be shown, which is all you need if "
-            "you intend to collect a number of cells. Enter a scale above if you would rather "
-            "work in areas."
+            "This file carries no measurements to estimate an image scale from, so amounts are "
+            "in numbers of shapes. That is all you need to collect a number of cells; enter a "
+            "scale in the next step to work in areas."
         )
 
     table = _cached_statistics(gdf, _shape_fingerprint(gdf), pixel_size_um)
@@ -122,31 +128,43 @@ def overview_step(selected: list[str]) -> None:
     )
 
 
-def _budget_mode(pixel_size_um: float | None) -> budget.BudgetMode:
-    """Let the user choose what a budget counts. Area needs a scale; cells never do."""
+def _budget_mode() -> tuple[budget.BudgetMode, float | None]:
+    """Choose what a budget counts, with the image scale beside it.
+
+    The scale sits here rather than in a step of its own because this is the only thing it
+    feeds: an area budget. Users were confused about why the app asked for it at all
+    (`decisions.md` 057).
+    """
     labels = {
-        budget.BudgetMode.CELLS: "Number of cells per replicate",
+        budget.BudgetMode.CELLS: "Number of shapes per replicate",
         budget.BudgetMode.AREA: "Area of tissue per replicate (µm²)",
     }
-    options = [budget.BudgetMode.CELLS]
-    if pixel_size_um:
-        options.append(budget.BudgetMode.AREA)
-    else:
-        st.caption(
-            "Budgeting by area needs the image scale from step 4. Collecting by number of "
-            "cells works without it."
+    mode_column, scale_column = st.columns([3, 2])
+
+    with scale_column:
+        pixel_size_um = ui_shared.pixel_size_control()
+
+    with mode_column:
+        options = [budget.BudgetMode.CELLS]
+        if pixel_size_um:
+            options.append(budget.BudgetMode.AREA)
+        mode = st.radio(
+            "Budget by",
+            options=options,
+            format_func=lambda mode: labels[mode],
+            key="budget_mode_choice",
+            help=(
+                "Collecting a number of shapes needs nothing else. Collecting a target area "
+                "needs the image scale, since areas are measured from the shapes themselves."
+            ),
         )
+        if not pixel_size_um:
+            st.caption("Enter an image scale to budget by area instead.")
 
-    return st.radio(
-        "Budget by",
-        options=options,
-        format_func=lambda mode: labels[mode],
-        horizontal=True,
-        key="budget_mode_choice",
-    )
+    return mode, pixel_size_um
 
 
-def budgets_step(selected: list[str], pixel_size_um: float | None, step: str = "6") -> list[budget.ClassBudget]:
+def budgets_step(selected: list[str], step: str = "5") -> tuple[list[budget.ClassBudget], float | None]:
     """Replicates and per-replicate amount for each class, with a feasibility check."""
     st.markdown(f"## Step {step}: Replicates and amounts")
     st.markdown(
@@ -154,7 +172,7 @@ def budgets_step(selected: list[str], pixel_size_um: float | None, step: str = "
         "replicates you want and how much goes into each one."
     )
 
-    mode = _budget_mode(pixel_size_um)
+    mode, pixel_size_um = _budget_mode()
     gdf = st.session_state.gdf
     table = _cached_statistics(gdf, _shape_fingerprint(gdf), pixel_size_um)
     supply = table.loc[selected, mode.stats_column]
@@ -197,7 +215,7 @@ def budgets_step(selected: list[str], pixel_size_um: float | None, step: str = "
     _report_feasibility(table, budgets, mode)
     st.session_state.budget_mode = mode.value
     st.session_state.budgets = [vars(item) for item in budgets]
-    return budgets
+    return budgets, pixel_size_um
 
 
 def _report_feasibility(table: pandas.DataFrame, budgets: list[budget.ClassBudget], mode: budget.BudgetMode) -> None:
@@ -441,28 +459,33 @@ def _export_selection(result, settings: dict, params: selection.SelectionParams,
 
     st.session_state.saw = samples_and_wells
 
-    ui_shared.export_step(settings, lambda _settings: plan, step="9")
+    ui_shared.export_step(settings, lambda _settings: plan, step="8")
 
 
 def render(uploaded_file) -> None:
-    """The cell workflow as far as Phase 3 takes it."""
-    pixel_size = ui_shared.pixel_size_step(step="4")
-    st.divider()
+    """The cell workflow.
 
+    The image scale is no longer a step of its own. Where the file allows it, the scale is
+    estimated from QuPath's own measurements and the class table simply shows areas; the input
+    to override or supply it sits beside the area budget control, which is the only thing it
+    feeds (`decisions.md` 056, 057).
+    """
     if st.session_state.gdf is None:
         st.info("Upload a GeoJSON to continue.")
         return
 
-    selected = class_selection_step(pixel_size, step="5")
+    pixel_size, _source = ui_shared.resolve_pixel_size()
+
+    selected = class_selection_step(pixel_size, step="4")
     if not selected:
         return
     overview_step(selected)
     st.divider()
 
-    budgets = budgets_step(selected, pixel_size, step="6")
+    budgets, pixel_size = budgets_step(selected, step="5")
     st.divider()
 
-    settings = capacity_step(budgets, step="7")
+    settings = capacity_step(budgets, step="6")
     st.divider()
 
-    selection_step(budgets, settings, pixel_size, step="8")
+    selection_step(budgets, settings, pixel_size, step="7")
