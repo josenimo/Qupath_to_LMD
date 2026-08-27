@@ -254,3 +254,33 @@ def test_sanitize_keeps_what_qupath_needs_back(cells_gdf):
         f"QuPath needs exactly these columns to re-import; got {list(sanitized.columns)}."
     )
     assert not sanitized.isna().to_numpy().any(), "NaNs survived, and QuPath rejects NaN-bearing properties."
+
+
+def test_points_without_names_are_reported_not_dropped_silently(tmp_path):
+    """A point with no name cannot be picked as a calibration point.
+
+    Dropping it silently left the user staring at "no calibration points" while looking at the
+    points they had just drawn in QuPath.
+    """
+    document = json.loads(open(CELLS_FILE).read())
+    for feature in document["features"]:
+        if feature["geometry"]["type"] == "Point":
+            feature["properties"]["name"] = None
+    path = tmp_path / "unnamed_points.geojson"
+    path.write_text(json.dumps(document))
+
+    _gdf, points, report = geojson.read_and_qc(str(path))
+    assert points == {}, "Unnamed points must not become calibration candidates."
+    assert report.n_unnamed_points == 3, (
+        f"Three unnamed points should be reported so the user knows why none are selectable; "
+        f"the report says {report.n_unnamed_points}."
+    )
+
+
+def test_named_points_are_not_counted_as_unnamed(cells):
+    _gdf, points, report = cells
+    assert len(points) == 3
+    assert report.n_unnamed_points == 0, (
+        f"All three points in this file are named, but {report.n_unnamed_points} were reported "
+        "as unnamed."
+    )

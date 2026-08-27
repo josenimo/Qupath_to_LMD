@@ -1099,3 +1099,26 @@ if two share a well. Both are recoverable by unticking the box.
 **Jose is not convinced by dropdowns**, and said to build it and look. If it reads badly the
 fallback costs nothing: remove the checkbox and the automatic layout plus the start well already
 cover the multi-slide case.
+
+## 063 — "object" and "polygon" never appear in a message to the user
+**Date:** 2026-08-27 · **Status:** active · **corrects 059**
+**Decision:** Jose's correction. Every count the app *shows* says **shapes**, including counts of
+things dropped while reading. "object" survives in code and documentation, where the QuPath
+distinction is real; "polygon" survives for the geometry type, and appears in a message only to
+explain why something cannot be cut. The upload summary now reads "This file holds 14,145 shapes
+and 3 named calibration points" instead of "Geometries in file: 14145 Polygons, 3 Points".
+**Why 059 was wrong:** it drew the line between "QuPath's object" and "our shape" and applied that
+line to the interface as well as the code. Internally coherent, but it produced a screen where the
+same 14,145 things were called Polygons, then shapes, then objects within a few lines — which is
+exactly the confusion the glossary was written to remove. The distinction is real in the code and
+invisible in a message.
+**What changed:** nine user-facing strings, the geometry-count line, and the log lines for
+consistency. Nothing about the code's internal vocabulary or `objectType`.
+**Made enforceable:** `tests/test_nomenclature.py` now fails if any `ui_*` module shows the user
+the word "object" (excluding `objectType` and "objective") or reports a count of geometry types.
+The earlier version only checked that "shapes" appeared *somewhere*, which is why this slipped
+through a PR whose entire purpose was naming.
+**Found while fixing it, and fixed too:** a point with no name cannot be chosen as a calibration
+point, and was being dropped without a word. A user who drew three points but did not name them
+saw "This file has no calibration points" — while looking at their points. The report now carries
+`n_unnamed_points` and the app says to name them in QuPath's annotation list.

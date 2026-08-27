@@ -87,17 +87,26 @@ def upload_step(step: str = "1"):
         st.session_state.geojson_report = report
 
     report = st.session_state.geojson_report
-    counts = ", ".join(f"{count} {name}s" for name, count in report.geometry_counts.items())
-    st.write(f"Geometries in file: {counts}")
+    described = f"**{report.n_shapes_in_file:,} shapes**"
+    if report.calibration_point_names:
+        described += f" and {len(report.calibration_point_names)} named calibration points"
+    st.write(f"This file holds {described}.")
 
+    if report.n_unnamed_points:
+        st.warning(
+            f"{report.n_unnamed_points} point(s) in this file have no name, so they cannot be "
+            "chosen as calibration points. Name each point annotation in QuPath's annotation "
+            "list and export again."
+        )
     if report.n_unclassified_dropped:
         st.warning(
-            f"{report.n_unclassified_dropped} objects have no QuPath classification. "
-            "These are unclassified objects and cannot be assigned to a well, so they are ignored."
+            f"{report.n_unclassified_dropped:,} shapes have no QuPath classification, so they "
+            "cannot be assigned to a well and are ignored. Classify them in QuPath if you meant "
+            "to collect them."
         )
     if report.n_unnamed_classification_dropped:
         st.warning(
-            f"{report.n_unnamed_classification_dropped} objects have a QuPath classification "
+            f"{report.n_unnamed_classification_dropped:,} shapes have a QuPath classification "
             "that carries no usable class name, so they cannot be assigned to a well and are "
             "ignored. If you expected these, check how they are classified in QuPath."
         )
@@ -105,15 +114,16 @@ def upload_step(step: str = "1"):
         total = sum(report.multiclass_counts.values())
         listed = ", ".join(f"{name} ({count})" for name, count in list(report.multiclass_counts.items())[:6])
         st.warning(
-            f"{total} objects carry more than one QuPath class. Each combination becomes its "
+            f"{total:,} shapes carry more than one QuPath class. Each combination becomes its "
             f"own class, with the class names joined by `--`: {listed}. "
-            "These objects are not counted under any of their individual classes — give each "
+            "These shapes are not counted under any of their individual classes — give each "
             "combination its own well, or reclassify in QuPath if that is not what you want."
         )
     if report.n_multipolygons_dropped:
         st.warning(
-            f"{report.n_multipolygons_dropped} MultiPolygon objects found. These are not supported — "
-            "please split them into single polygons in QuPath. Processing continues without them."
+            f"{report.n_multipolygons_dropped:,} shapes are made of several separate outlines "
+            "(MultiPolygon geometry), which the cutter cannot follow as one path. Split them in "
+            "QuPath if you need them. Processing continues without them."
         )
         st.table(report.multipolygons)
 
@@ -331,7 +341,7 @@ def _report_pixel_size(value, source, estimate, report) -> None:
     if source == "estimated":
         st.caption(
             f"Estimated from this file's own QuPath measurements across "
-            f"{report.n_area_measurements:,} objects (spread {report.pixel_size_spread:.1%}). "
+            f"{report.n_area_measurements:,} shapes (spread {report.pixel_size_spread:.1%}). "
             "Type over it if you know better."
         )
     elif estimate:
@@ -339,7 +349,7 @@ def _report_pixel_size(value, source, estimate, report) -> None:
         if check.is_concerning:
             st.warning(
                 f"Your value is **{check.ratio:.2f}×** what this file implies "
-                f"({estimate:.4f} µm/px from {report.n_area_measurements:,} objects). One of the "
+                f"({estimate:.4f} µm/px from {report.n_area_measurements:,} shapes). One of the "
                 "two is wrong — usually a scale read from the wrong image, or a factor-of-ten "
                 "slip. A 2× error in scale is a 4× error in every area."
             )
@@ -351,7 +361,7 @@ def _report_pixel_size(value, source, estimate, report) -> None:
     if report is not None and report.pixel_size_spread and report.pixel_size_spread > WIDE_SPREAD:
         st.warning(
             f"The scale implied by this file varies by {report.pixel_size_spread:.1%} between "
-            "objects. That usually means the export mixes images, or was rescaled — worth "
+            "shapes. That usually means the export mixes images, or was rescaled — worth "
             "checking before relying on any area."
         )
 

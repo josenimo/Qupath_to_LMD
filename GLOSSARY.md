@@ -15,17 +15,20 @@ through to the XML, and it is what py-lmd calls them too (`new_shape`, `Collecti
 Counts in the interface — "8537 shapes available", "100 shapes per replicate" — always mean
 this.
 
-**object** — QuPath's word, used **only** when talking about the input file. QuPath's interface
-says annotation objects, cell objects and detection objects, and its GeoJSON carries an
-`objectType` field. So: *QuPath exports objects; the app reads them as shapes.* Messages about
-what happened during reading say "objects" because at that point they are still QuPath's;
-messages about what will be cut say "shapes".
+**object** — QuPath's word. Used in **code and documentation** where the distinction matters —
+QuPath's interface says annotation objects, cell objects and detection objects, and its GeoJSON
+carries an `objectType` field — but **never in a message to the user**. A user reading one screen
+should not meet three words for the same thing, and the object-versus-shape distinction is real in
+the code yet invisible and unhelpful in an interface. So every count the app shows says *shapes*,
+including counts of things that were dropped during reading.
 
-Some objects never become shapes: unclassified ones, ones whose classification carries no usable
-name, and MultiPolygons.
+Some shapes in a file never make it into a collection: unclassified ones, ones whose classification
+carries no usable class name, and ones made of several separate outlines.
 
 **polygon** — the **geometry type**, alongside `MultiPolygon` and `LineString`. Used only in that
-sense. A shape usually has Polygon geometry, but "polygon" is not a synonym for "shape".
+sense, and only in a message when it explains why something cannot be cut — "several separate
+outlines (MultiPolygon geometry)". A count of geometry types tells the user about shapely rather
+than about their tissue, so the app reports shapes instead.
 
 **contour** — not used. It appeared in an image caption and the README; both now say *shape*.
 

@@ -449,17 +449,24 @@ Initialised in the block at the top of `streamlit_app.py`. Any new key belongs h
 `GLOSSARY.md` is the reference; the rule is one word per thing (`decisions.md` 059).
 
 - **shape** — one outline the laser will cut. The app's term everywhere, and py-lmd's too.
-- **object** — QuPath's word, used only when discussing the input file, because QuPath's own
-  interface says annotation/cell/detection objects and its GeoJSON carries `objectType`. So
-  read-time messages say "objects" and everything downstream says "shapes".
+- **object** — QuPath's word. Used in code and docs where the distinction matters, because
+  QuPath's own interface says annotation/cell/detection objects and its GeoJSON carries
+  `objectType` — but **never in a message to the user** (`decisions.md` 063). Every count the app
+  shows says "shapes", including counts of what was dropped while reading.
 - **polygon** — the geometry type only, alongside `MultiPolygon` and `LineString`. Not a synonym
   for shape.
 - **contour** — not used. It was a fourth name, in an image caption and the README.
 - Renamed for consistency: `plot.POLYGON_LIMIT` → `plot.SHAPE_LIMIT` (it counts shapes), and
   `plate.plate_shape` → `plate.plate_dimensions` (a plate is not something the laser cuts).
+- The upload summary reports `n_shapes_in_file` and the named calibration points, rather than a
+  dump of `geom_type` counts — "14,145 shapes and 3 named calibration points", not
+  "14145 Polygons, 3 Points". `geometry_counts` survives in the report for the log.
+- **Unnamed points are reported**, not dropped silently: a point with no name cannot be chosen as
+  a calibration point, and saying nothing left the user staring at "no calibration points" while
+  looking at points they had just drawn.
 - `tests/test_nomenclature.py` enforces this: it fails if "contour" reappears, if the old names
-  come back, if a canonical term is missing from the glossary, or if the glossary stops being
-  linked from `README.md` and `CLAUDE.md`.
+  come back, if a canonical term is missing from the glossary, if the glossary stops being linked,
+  **or if any UI module shows the user the word "object" or a count of geometry types**.
 
 ## Conventions in the code
 

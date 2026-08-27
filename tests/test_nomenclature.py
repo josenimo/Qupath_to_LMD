@@ -91,14 +91,70 @@ def test_qupath_field_names_are_left_alone():
     )
 
 
-def test_user_facing_counts_are_described_as_shapes():
-    """Messages about what will be cut should say 'shapes'.
+# Words that legitimately appear in UI source for reasons other than naming a cuttable thing.
+ALLOWED_IN_UI = ("objectType", "objective")
 
-    Messages about reading the file legitimately say 'objects', because at that point they are
-    still QuPath's objects — so this only checks that 'shapes' is the term actually in use.
+
+def _ui_strings(path: pathlib.Path) -> list[tuple[int, str]]:
+    """Lines of a UI module that contain a quoted string, with their line numbers."""
+    return [
+        (number, line)
+        for number, line in enumerate(path.read_text().splitlines(), start=1)
+        if ('"' in line or "'" in line) and not line.lstrip().startswith("#")
+    ]
+
+
+@pytest.mark.parametrize("module", ["ui_shared.py", "ui_cells.py", "ui_legacy.py"])
+def test_no_user_facing_text_says_object(module):
+    """A user reading one screen should not see three words for the same thing.
+
+    The distinction between "QuPath object" and "our shape" is real in the code, but invisible
+    and unhelpful in a message. Jose caught the app saying "5608 objects have no QuPath
+    classification" two lines from "8537 shapes available" (`decisions.md` 063).
     """
-    ui = (ROOT / "src" / "qupath_to_lmd" / "ui_shared.py").read_text()
-    assert re.search(r"shapes? (available|selected)|\{[^}]*\} shapes", ui), (
-        "No message in ui_shared.py counts shapes. If shape counts are being described some "
-        "other way, the interface and the glossary have diverged."
+    path = ROOT / "src" / "qupath_to_lmd" / module
+    offenders = [
+        f"  line {number}: {line.strip()[:90]}"
+        for number, line in _ui_strings(path)
+        if re.search(r"\bobjects?\b", line, re.IGNORECASE)
+        and not any(allowed in line for allowed in ALLOWED_IN_UI)
+    ]
+    assert not offenders, (
+        f"{module} shows the user the word 'object'. In messages, everything the app reads or "
+        "cuts is a shape — 'object' is QuPath's word and belongs in code and docs only.\n"
+        + "\n".join(offenders)
+    )
+
+
+@pytest.mark.parametrize("module", ["ui_shared.py", "ui_cells.py", "ui_legacy.py"])
+def test_no_user_facing_text_leads_with_a_geometry_type(module):
+    """"14145 Polygons" told the user about shapely, not about their tissue.
+
+    Geometry types may be *mentioned* to explain a problem — "several separate outlines
+    (MultiPolygon geometry)" — but a count of them is not a useful thing to show.
+    """
+    path = ROOT / "src" / "qupath_to_lmd" / module
+    offenders = [
+        f"  line {number}: {line.strip()[:90]}"
+        for number, line in _ui_strings(path)
+        if re.search(r"\{[^}]*\}\s*(Polygon|Point|LineString)s?\b", line)
+        or re.search(r"(Polygon|LineString)s\b(?!.*geometry)", line)
+        and "MultiPolygon geometry" not in line
+    ]
+    assert not offenders, (
+        f"{module} reports counts of geometry types to the user. Report shapes; mention a "
+        "geometry type only to explain why something cannot be cut.\n" + "\n".join(offenders)
+    )
+
+
+def test_the_shape_count_is_reported_by_the_reader():
+    """The count shown after upload comes from the report, so it is testable."""
+    from qupath_to_lmd import geojson
+
+    gdf, _points, report = geojson.read_and_qc("demo_Qupath_project/Single_cells.geojson")
+    assert report.n_shapes_in_file == 128, (
+        f"The file holds 128 non-point geometries; the report says {report.n_shapes_in_file}."
+    )
+    assert report.n_shapes_in_file >= report.n_shapes_kept, (
+        "More shapes were kept than the file contained, which cannot happen."
     )
