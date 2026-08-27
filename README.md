@@ -22,7 +22,7 @@ Two workflows: **annotations**, the standard where every classified annotation i
 Go to [Streamlit Webapp Link](https://qupath-to-lmd-mdcberlin.streamlit.app/)
 
 <a href="https://qupath-to-lmd-mdcberlin.streamlit.app/">
-  <img src="assets/webapp_screenshot.png" alt="Open WebApp" width="600"/>
+  <img src="assets/webapp_cells_workflow.gif" alt="Open WebApp" width="700"/>
 </a>
 
 1. Upload your geojson file, and choose your calibration points
