@@ -23,6 +23,20 @@ PIXEL_SIZE_FORMAT = f"%.{PIXEL_SIZE_DECIMALS}f"
 PIXEL_SIZE_MIN = PIXEL_SIZE_STEP
 PIXEL_SIZE_MAX = 100.0
 
+# Where the hosted app stops being comfortable. 40 000 shapes is about the most a TMA core
+# yields, so anything much beyond it is whole-slide territory. Figures are measured, not
+# guessed — see `facts.md` and `decisions.md` 051.
+HOSTED_COMFORTABLE_SHAPES = 40_000
+SCALE_BENCHMARKS = (
+    # shapes, seconds per interaction, seconds per collection, peak MB
+    (8_500, "0.5 s", "9 s", "690 MB"),
+    (50_000, "0.6 s", "10 s", "710 MB"),
+    (150_000, "2 s", "15 s", "940 MB"),
+    (1_000_000, "16 s", "58 s", "2 700 MB"),
+)
+# Community Cloud documents 690 MB guaranteed and 2.7 GB maximum per app.
+HOSTED_MEMORY_CEILING_MB = 2_700
+
 WORKFLOWS = {
     "legacy": "Annotations — one class is one sample is one well",
     "cells": "Cell segmentation — pick classes, replicates and how much to collect",
@@ -33,16 +47,6 @@ WORKFLOWS = {
 def _read_geojson(source):
     """Cached wrapper so a rerun does not re-parse the same upload."""
     return geojson.read_and_qc(source)
-
-
-@st.cache_data(show_spinner=False)
-def _cached_pixel_size_qc(_gdf, cache_key: tuple, entered_um_per_px: float):
-    """Cross-check the entered scale, cached: it parses a measurement per shape.
-
-    Streamlit reruns the whole script on every widget change, so without this the check
-    re-parses every shape's area each time the user touches anything (`decisions.md` 050).
-    """
-    return qc.pixel_size_qc(_gdf, entered_um_per_px)
 
 
 def reset_file_state():
@@ -110,7 +114,44 @@ def upload_step(step: str = "1"):
         st.table(report.multipolygons)
 
     st.success(f"File check complete, {report.n_shapes_kept} shapes available.")
+    _report_scale(report.n_shapes_kept)
     return uploaded_file
+
+
+def _report_scale(n_shapes: int) -> None:
+    """Warn when a file is large enough that the hosted app will struggle.
+
+    A whole-slide export can hold a million cells. That does not fit: it needs about 2.7 GB,
+    which is the documented ceiling for a Community Cloud app, so it will hit the resource
+    limit rather than merely feel slow. Better to say so before the user spends ten minutes
+    finding out (`decisions.md` 051).
+    """
+    if n_shapes <= HOSTED_COMFORTABLE_SHAPES:
+        return
+
+    rows = "\n".join(
+        f"| {shapes:,} | {per_interaction} | {per_collection} | {memory} |"
+        for shapes, per_interaction, per_collection, memory in SCALE_BENCHMARKS
+    )
+    st.warning(
+        f"**This file has {n_shapes:,} shapes, which is a lot for the hosted app.** Around "
+        f"{HOSTED_COMFORTABLE_SHAPES:,} is about the most a single TMA core yields, so beyond "
+        "that you are into whole-slide territory.\n\n"
+        "Measured on this app:\n\n"
+        "| shapes | per click or setting change | per collection | memory |\n"
+        "| --- | --- | --- | --- |\n" + rows + "\n\n"
+        f"The hosted app has about {HOSTED_MEMORY_CEILING_MB:,} MB, so a whole slide of a "
+        "million cells does not fit — it will hit the resource limit, not just feel slow. "
+        "Nothing stops you continuing here, but for a file this size it is worth either "
+        "narrowing the selection in QuPath first, or running the app on your own machine:\n\n"
+        "```\n"
+        "git clone https://github.com/CosciaLab/Qupath_to_LMD\n"
+        "cd Qupath_to_LMD\n"
+        "uv sync\n"
+        "uv run streamlit run streamlit_app.py\n"
+        "```\n\n"
+        "Locally you have your whole machine, and nothing is uploaded anywhere."
+    )
 
 
 def workflow_step(step: str = "2") -> str:
@@ -279,9 +320,13 @@ def pixel_size_step(step: str = "4") -> float | None:
         )
         return None
 
-    gdf = st.session_state.gdf
-    report = _cached_pixel_size_qc(
-        gdf, (st.session_state.get("file_name"), len(gdf)), entered
+    # The implied scale was computed once when the file was read, so this is free.
+    geojson_report = st.session_state.geojson_report
+    report = qc.compare_pixel_size(
+        entered,
+        geojson_report.implied_pixel_size_um,
+        geojson_report.n_area_measurements,
+        geojson_report.pixel_size_spread,
     )
     if report.implied_um_per_px is None:
         # Measurements are optional on export and most files will not have them, so this is
@@ -550,8 +595,8 @@ def export_step(settings: dict, build_plan, step: str = "6") -> None:
 
 
 PATH_ORDER_LABELS = {
-    export.PathOrder.GREEDY: "Shortest path within each well — nearest-neighbour (recommended)",
-    export.PathOrder.HILBERT: "Shortest path within each well — space-filling curve",
+    export.PathOrder.HILBERT: "Shortest path within each well — space-filling curve (recommended)",
+    export.PathOrder.GREEDY: "Shortest path within each well — nearest-neighbour, ~8% shorter but slow to start",
     export.PathOrder.GROUPED: "Group each well together, no path shortening",
     export.PathOrder.NONE: "As loaded — no reordering (what this app did before)",
 }
@@ -590,8 +635,9 @@ def _export_parameters(step: str) -> tuple[float, export.PathOrder]:
                 "a well's shapes together means the collector moves once per well instead of "
                 "once per shape; shortening the path within each well cuts how far the stage "
                 "travels between cuts. None of this changes which tissue lands in which well. "
-                "The first collection of a session may take an extra few seconds while the "
-                "nearest-neighbour solver compiles."
+                "The nearest-neighbour option is marginally shorter but needs around 15 seconds "
+                "and several hundred MB to start up the first time in a session, so the "
+                "space-filling curve is the default."
             ),
         )
 

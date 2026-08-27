@@ -43,13 +43,16 @@ class PathOrder(str, Enum):
     (`decisions.md` 047).
     """
 
-    GREEDY = "greedy"
     HILBERT = "hilbert"
+    GREEDY = "greedy"
     GROUPED = "grouped"
     NONE = "none"
 
 
-DEFAULT_PATH_ORDER = PathOrder.GREEDY
+# Hilbert, not greedy: greedy's first call costs ~354 MB of numba/umap JIT against hilbert's
+# 33 MB, for about 8% shorter stage travel. On a deployment whose ceiling is 2.7 GB and which
+# reinstalls every dependency on each reboot, that is the wrong trade (`decisions.md` 052).
+DEFAULT_PATH_ORDER = PathOrder.HILBERT
 
 
 def order_for_cutting(
@@ -149,7 +152,8 @@ def build_collection(
             by up to this much; larger values mean fewer vertices and faster cutting.
         plate: plate type, for the placement CSV.
         path_order: the order shapes are written in, which is the order the LMD cuts them.
-            Defaults to `GREEDY`, which minimises stage movement.
+            Defaults to `HILBERT`, which minimises stage movement without greedy's
+            memory cost.
     """
     selected = plan.selected
     if selected.empty:

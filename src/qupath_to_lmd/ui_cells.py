@@ -327,8 +327,15 @@ def _selection_params(step: str) -> selection.SelectionParams:
     )
 
 
+@st.fragment
 def selection_step(budgets, settings: dict, pixel_size_um: float | None, step: str = "8") -> None:
-    """Choose the shapes, preview them, and offer the export."""
+    """Choose the shapes, preview them, and offer the export.
+
+    A fragment, so changing the mode, the seed or the neighbour distance reruns only this step
+    and the export below it, instead of re-executing steps 1-7 as well. Everything downstream
+    of these controls lives inside the fragment, so nothing can be left showing a stale
+    selection (`decisions.md` 051).
+    """
     st.markdown(f"## Step {step}: Select shapes and export")
     params = _selection_params(step)
 

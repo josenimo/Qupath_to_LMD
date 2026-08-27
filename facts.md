@@ -1,10 +1,10 @@
 # facts.md
 
 Living record of what is true about this app. Corrected in place when it goes stale — not
-append-only (that is `decisions.md`). Last verified: 2026-08-26.
+append-only (that is `decisions.md`). Last verified: 2026-08-27.
 
-Restructuring into two workflows is underway: `ROADMAP.md`. Phases 0 and 1 are done, so
-the app now has a workflow router; the cell workflow itself is still scaffolding.
+Restructuring into two workflows is done: `ROADMAP.md` Phases 0-6 are complete. Both
+workflows reach a downloadable collection.
 
 ---
 
@@ -42,9 +42,9 @@ src/qupath_to_lmd/
   model.py                        CollectionPlan, canonical column names, provenance
   geojson.py                      read_and_qc, explode_classes, extract_coordinates,
                                   rewrite_classification, sanitize_for_qupath,
-                                  measurements_frame, area_measurement_column
+                                  implied_pixel_size, drop_unused_columns
   plate.py                        plate shapes, acceptable_wells, layouts, saw parse/convert
-  qc.py                           triangle_qc, validate_saw, pixel_size_qc (report objects)
+  qc.py                           triangle_qc, validate_saw, compare_pixel_size (reports)
   stats.py                        class_statistics, for_display, reference_pixel_sizes
   budget.py                       BudgetMode, ClassBudget, feasibility, total_groups
   selection.py                    SelectionMode, SelectionParams, select, grid_bins
@@ -55,13 +55,13 @@ src/qupath_to_lmd/
   === UI layer: Streamlit, owns session_state ===
   ui_shared.py                    steps both workflows use
   ui_legacy.py                    annotations workflow (frozen as of Phase 1)
-  ui_cells.py                     cell-segmentation workflow (scaffolding only so far)
+  ui_cells.py                     cell-segmentation workflow (step 8 is an st.fragment)
   === other ===
   mock_streamlit.py               patch_streamlit() — stubs st.* for notebook use
   __init__.py                     empty
 tools/
   golden_harness.py               byte-equality regression gate
-  golden/                         8 reference artefacts
+  golden/                         10 reference artefacts, 5 cases
 demo_Qupath_project/              real QuPath project used as test fixture
   TD_01_verysmall_mIF.geojson     9 features: 6 annotation Polygons + 3 calibration Points
   Single_cells.geojson            131 features: 121 cells + 7 annotations + 3 Points
@@ -493,14 +493,27 @@ The roadmap said to measure before designing; the measurements changed what need
 
 | shapes | per widget change | on click | peak RSS |
 | --- | --- | --- | --- |
-| 8 537 (real export) | 0.49 s | 9.3 s | 688 MB |
-| 50 000 | 0.64 s | 9.7 s | 713 MB |
-| 150 000 | 1.94 s | 15.1 s | 936 MB |
+| 8 537 (real export) | 0.49 s | 9.3 s | 690 MB |
+| 50 000 | 0.64 s | 9.7 s | 710 MB |
+| 150 000 | 1.94 s | 15.1 s | 940 MB |
+| 1 000 000 (491 MB file) | 16.7 s | 53 s | **2 207 MB** |
 
-**Nothing breaks at 150 000 shapes** — it gets sluggish, not broken. Those per-rerun figures are
-the *uncached* library cost; the app caches them (below), so a user pays them once per change of
-input rather than once per widget touch.
+Per-rerun figures are the *uncached* library cost; the app caches them, so a user pays them once
+per change of input rather than once per widget touch.
 
+**A million cells does not belong on the hosted app.** Community Cloud documents 690 MB guaranteed
+and **2.7 GB maximum** per app, so 2 207 MB leaves little headroom, and before the Phase 6
+optimisations it was 2 689 MB — over the line in practice. Reading the file alone costs ~1.4 GB.
+Rough model: **~650 MB base + ~2 KB per shape**.
+
+`ui_shared` warns above `HOSTED_COMFORTABLE_SHAPES` (40 000 — about the most a single TMA core
+yields) with these figures and instructions for running locally (`decisions.md` 051).
+
+- **Community Cloud specifics**, documented Feb 2024 and subject to change: CPU 0.078–2 cores,
+  memory 690 MB minimum to 2.7 GB maximum, storage up to 50 GB. Apps **sleep after 12 hours**
+  without traffic and anyone with view access can wake them. **Every dependency in
+  `requirements.txt` is reinstalled on each reboot** — there is no documented wheel cache — so
+  each package added lengthens every cold start.
 - **The data is cheap; the imports are not.** Memory attribution: bare Python 14 MB, +geopandas
   and pandas 100 MB, +`lmd.lib` and matplotlib 243 MB, **+greedy's first call 597 MB**, +the whole
   83.7 MB GeoJSON 674 MB. The frame itself is only 39 MB, 36 MB of which is the `measurements`
@@ -517,6 +530,19 @@ input rather than once per widget touch.
   saves. `_shape_fingerprint` is `(file name, row count, sorted class names)` — the class names
   matter because exploding a class rewrites them in place, so a filename alone would serve a
   stale selection.
+- **Columns nothing reads are dropped at load** (`geojson.UNUSED_COLUMNS`): `measurements`,
+  `name`, `isLocked`. `measurements` is consumed once during the read to derive the implied pixel
+  size, which then lives in the report — so `qc.compare_pixel_size` is pure arithmetic and costs
+  nothing per rerun, down from 0.28 s and a 170 MB transient. At a million shapes the drop frees
+  107 MB of a 383 MB frame.
+- **The plan builders copy only the columns a plan needs** (`model.PLAN_SOURCE_COLUMNS`), not the
+  whole frame. A full copy cost 99 MB at a million shapes.
+- **Step 8 is an `st.fragment`**, so changing the selection mode, seed or neighbour distance
+  re-runs only steps 8–9 rather than the whole script. The export lives inside the fragment, so
+  nothing downstream can be left showing a stale selection. Note Streamlit forbids combining
+  `@st.fragment` and caching on the *same* function — the caches here wrap different functions.
+- Together these took the million-shape peak from 2 689 MB to **2 207 MB**, and
+  `build_collection` from 7.6 s to 1.1 s (the latter mostly by defaulting to hilbert).
 
 ## Regression harness
 

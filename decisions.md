@@ -848,3 +848,50 @@ free-tier deployment; it is recorded rather than acted on, because the default i
 **Verified:** 6 checks that the caches hit on repeated reruns and invalidate on a changed seed,
 changed replicates, an exploded class and a different file. All other suites and the golden
 harness unaffected.
+
+## 051 — Scale guardrail, and the optimisations the research justified
+**Date:** 2026-08-27 · **Status:** active
+**Decision:** After researching Community Cloud's limits and profiling a genuine 1 000 000-cell
+export, four changes and one refusal.
+1. **Columns nothing reads are dropped at load** — `measurements`, `name`, `isLocked`. The
+   implied pixel size is derived from `measurements` once during the read and kept in the
+   report, so `qc.compare_pixel_size` became pure arithmetic: 0.28 s and a 170 MB transient per
+   rerun down to nothing. At a million shapes the drop frees 107 MB of a 383 MB frame.
+2. **The plan builders copy only the columns a plan needs**, not the whole frame — a full copy
+   cost 99 MB at a million shapes.
+3. **Step 8 is an `st.fragment`**, so changing the selection mode, seed or neighbour distance
+   re-runs only steps 8–9. The export sits inside the fragment, so nothing downstream can show
+   a stale selection.
+4. **A warning after load above 40 000 shapes** — about the most a single TMA core yields —
+   carrying the measured timings and memory, and instructions for running locally.
+**Refused:** making the processed-GeoJSON re-export optional, which was the largest remaining
+cost at 27.9 s for a million shapes. Jose: that re-export is critical. It stays.
+**Why the guardrail is a warning and not a block:** 003. A million cells is a bad idea on the
+hosted app, not an impossible one, and a user who understands the trade-off may still want it.
+**What the research established** (documented Feb 2024, subject to change): Community Cloud
+gives 0.078–2 CPU cores, **690 MB guaranteed to 2.7 GB maximum**, 50 GB storage; apps sleep
+after 12 hours; and **every dependency is reinstalled on each reboot** with no documented wheel
+cache, so each package added lengthens every cold start.
+**Measured outcome:** the million-shape peak fell from 2 689 MB to **2 207 MB** and
+`build_collection` from 7.6 s to 1.1 s. A million cells now fits under the ceiling with headroom
+instead of sitting on it — while remaining slow enough that the guardrail is still right.
+
+## 052 — Hilbert is the default again; greedy stays available
+**Date:** 2026-08-27 · **Status:** active · **supersedes the default chosen in 047**
+**Decision:** Jose's call: "354 MB is not worth 8% shorter travel. User experience wins here."
+`DEFAULT_PATH_ORDER` is `HILBERT`. Greedy remains selectable, and `umap-learn` stays a
+dependency so it works.
+**Why:** greedy's first call costs about 354 MB of numba/umap JIT and roughly 15 seconds, against
+33 MB and a fraction of a second for hilbert, in exchange for ~8% shorter stage travel
+(197 563 px vs 213 295 px on 900 shapes). On a deployment capped at 2.7 GB that reinstalls every
+dependency on each reboot, the memory and the cold start cost more than the travel saves. Both
+still collapse collector movements from 759 to 8, which was the large win in 047 and is
+unaffected.
+**Cost accepted:** keeping greedy selectable keeps umap-learn, pynndescent and scikit-learn in
+`requirements.txt`, so every cold boot still installs them even for users who never pick it. If
+cold starts become the complaint, removing greedy entirely is the next step — but that is a
+different decision from which default to ship.
+**Verified:** goldens re-blessed after confirming, as in 047, that the coordinate multiset and
+every shape's well are unchanged and only the order differs. The Phase 5 check now asserts the
+*intent* — the default shortens the path and is not the JIT-heavy solver — rather than pinning a
+particular value.
