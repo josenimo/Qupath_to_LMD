@@ -914,6 +914,70 @@ was already the default from 052.
 **What was given up:** about 8% of stage travel against greedy. Hilbert still delivers the large
 win — 62% of the unordered path length and 8 collector movements instead of 759.
 
+## 054 — Round two planned: five PRs, tests first
+**Date:** 2026-08-27 · **Status:** active
+**Decision:** Jose's six usability items are planned as five PRs in `ROADMAP.md` section 5, in
+this order: test suite, nomenclature, estimated pixel size, minimum-area filter, plate control.
+**Why this order:** PR 2 is a wide mechanical rename and PR 3–4 change how amounts are computed.
+Both are far safer with tests underneath, so the suite comes first. PR 4 depends on PR 3 because
+a 150 µm² default is meaningless without a scale, and requiring every user to type one before the
+default filter works would be a step backwards.
+**Why the items were grouped as they were:** start well and editable plate are one PR because
+both answer "how does a class reach a well". Nomenclature is alone because a rename that touches
+every file should not share a diff with behaviour changes.
+**Alternatives rejected:** doing the rename first, unprotected — cheaper in total work, but the
+golden harness only covers output bytes, and a missed rename in a UI string or a docstring would
+go unnoticed. Deferring tests to last, after the features — leaves the riskiest changes
+unverified for the longest.
+
+## 055 — Drag-and-drop is not worth a custom frontend; edit the plate instead
+**Date:** 2026-08-27 · **Status:** active
+**Decision:** No drag-and-drop of classes into wells. The plate becomes **editable in place**
+via `st.data_editor` with a `SelectboxColumn` per well, so each cell offers a dropdown of the
+user's classes.
+**Why:** Streamlit has no native drag-and-drop into a grid. `streamlit-sortables` (pip-installable,
+no build step, Apache 2.0, ~137 stars) does support multi-container drag, but its model is items
+between a handful of named buckets — with 384 wells as drop targets it would be unusable. A genuine
+plate drag-and-drop means a custom React component: a build step, a frontend to maintain, and more
+weight on a deployment `decisions.md` 053 just spent a PR slimming.
+**Why the editable plate is arguably better anyway:** a dropdown of existing classes cannot produce
+a typo or name a class that does not exist, which dragging can. It is direct manipulation of the
+real plate grid with no new dependency.
+**Alternatives rejected:** `streamlit-sortables` for a coarser "drag classes into groups" step —
+kept as a fallback if the editable plate proves insufficient, to be decided on evidence.
+
+## 056 — Estimating the pixel size will become the default, not the cross-check
+**Date:** 2026-08-27 · **Status:** planned · **will supersede 011**
+**Decision:** Planned for PR 3. Where the file allows an estimate, the app uses it and offers an
+override behind a small expander; where it does not, it asks as it does today.
+**Why:** 011 chose explicit entry so that nobody accepts a derived number unread. Measured across
+every file where it could be computed, the estimate has been right — median ratio 0.9998 on
+`Single_cells.geojson`, spread 0.23–0.66% — while the input is the step users stumble on.
+**Why it cannot simply be removed, which was Jose's question:** the estimate needs QuPath area
+measurements, and those are only present if the user ticked the box on export. The first
+`Exemplar001` export had none at all, and annotation-only files never will. So the input has to
+survive as the fallback; what changes is that it stops being the default path.
+**Recorded now because** it is a reversal of a decision Jose made deliberately, and the reasoning
+should be visible before the code changes rather than after.
+
+## 057 — Refinements to the round-two plan
+**Date:** 2026-08-27 · **Status:** active · refines 054, 056
+**Decision:** Three of Jose's corrections to the plan, recorded before any of it is built.
+1. **The pixel size input moves next to the area budget control** rather than being its own step.
+   Users were confused about why the app wanted it; beside "budget by area" it explains itself,
+   because that is the only thing it feeds. Small input, help icon for the longer explanation.
+   The cell workflow loses a step as a result.
+2. **The minimum area default is 100 µm², not 150** — Jose's figure, on the grounds that
+   collecting less than that reliably is very difficult.
+3. **The minimum area filter applies before anything is measured.** Statistics, feasibility and
+   selection all work on the filtered pool, so "available area" means *collectable* area. The
+   opposite ordering would show a user an amount they cannot have, which is the class of error
+   this app exists to prevent.
+**Also settled:** CI is wanted, and its design is delegated — with the explicit requirement that
+a failing test says plainly what is broken. And the well dropdowns are to be built and looked at,
+not assumed: Jose is not convinced, and the fallback is the current read-only plate plus PR 5's
+start well, which already covers the multi-slide case.
+
 ## 058 — A pytest suite and CI, replacing the scratchpad scripts
 **Date:** 2026-08-27 · **Status:** active · **supersedes 006 and 008**
 **Decision:** `tests/` holds 119 pytest tests covering the library layer, the UI behaviour that

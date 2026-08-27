@@ -1,8 +1,10 @@
-# ROADMAP — two workflows on one backend
+# ROADMAP
 
-Plan for restructuring the app around two entry workflows that converge on a single
-export path. Written 2026-08-26. Decisions behind it: `decisions.md` 009–014.
-This is a plan, not a contract — phases get revised as we learn.
+**Round one — two workflows on one backend — is complete.** Phases 0–5 are merged and Phase 6
+is in review. Written 2026-08-26, revised 2026-08-27. Decisions behind it: `decisions.md`
+009–053. This is a plan, not a contract — phases get revised as we learn, and several were.
+
+Round two starts at [section 5](#5-round-two--usability-and-confidence).
 
 ---
 
@@ -88,6 +90,8 @@ dependency order and each one leaves the app working.
 
 ### Phase 0 — Foundations, no user-visible change
 
+> **Done** (`decisions.md` 021).
+
 - **Fix the CRS bug.** `geopandas.read_file` tags QuPath GeoJSON as `EPSG:4326`, so every
   `.area` / `.distance` call runs against a nonsense geographic projection and warns.
   Set `crs = None` on read. Nothing area-based is trustworthy until this is done.
@@ -105,6 +109,8 @@ safe to do at all.
 
 ### Phase 1 — Router and shared steps
 
+> **Done** (023–025).
+
 - Landing step: workflow choice, with the `objectType` count as a suggestion.
 - Shared steps factored out and used by both workflows: upload + QC, calibration selection
   + triangle QC, **µm/px input**, plate layout + well assignment, export.
@@ -115,6 +121,8 @@ safe to do at all.
   frozen**: later phases must not change its output.
 
 ### Phase 2 — Cell workflow: class selection with decision support
+
+> **Done** (032–036).
 
 The user needs to answer "how much can I even collect?" before choosing budgets. QuPath
 `measurements` gives 126 fields per cell to work with.
@@ -135,6 +143,8 @@ plotting function, one layer instead of two.
 
 ### Phase 3 — Replicates and budgets
 
+> **Done** (038–039).
+
 - Per included class: number of replicates.
 - Per class: budget as **either** a cell count **or** a target area in µm², per replicate.
 - **Feasibility, shown before selection runs**, because this is where experiments go
@@ -145,6 +155,8 @@ plotting function, one layer instead of two.
   rather than discovered at export.
 
 ### Phase 4 — Selection engine (`selection.py`)
+
+> **Done**, after three rounds of rework (040–045).
 
 The scientific core. Given a class, a budget, and constraints, choose cells.
 
@@ -201,6 +213,8 @@ image, replacing the separate `py-lmd` plot — one picture, drawn one way, befo
 
 ### Phase 5 — Export parameters
 
+> **Done** (046–048, 052–053).
+
 Two parameters exposed with recommended defaults and an on-screen explanation of each
 (`decisions.md` 010):
 
@@ -217,6 +231,8 @@ Two parameters exposed with recommended defaults and an on-screen explanation of
   little for 20 annotations and a great deal for 2000 cells.
 
 ### Phase 6 — Scale hardening
+
+> **In review** (050–051).
 
 Cell segmentation files can be 10⁴–10⁶ shapes; the demo has 131. Real files will surface
 problems this app has never met: Streamlit reruns the whole script on every widget change,
@@ -237,7 +253,7 @@ is wanted sooner — it improves the legacy workflow too. Phase 6 waits for a re
 
 Suggested order: **0 → 1 → 2 → 3 → 4 → 5 → 6**, with 5 promoted on request.
 
-## 4. Open questions
+## 4. Open questions from round one
 
 Not blocking, but they will need answers as the phases land.
 
@@ -254,3 +270,220 @@ Not blocking, but they will need answers as the phases land.
    when we return to it: README FAQ 6 tells users to do this by hand with a shared
    samples-and-wells scheme, and the new workflow generates well assignments per file,
    which makes that manual recipe harder rather than easier.
+
+---
+
+# 5. Round two — usability and confidence
+
+Six items from Jose, planned 2026-08-27. Round one made the app do the right thing; this round
+is about making it pleasant to use and safe to change.
+
+Ordered so that each PR lands on ground the previous one made solid. **PR 1 first on purpose:**
+everything after it is either a wide rename or a change to how amounts are computed, and both
+are much safer with a test suite underneath.
+
+| PR | Branch | What | Depends on |
+| --- | --- | --- | --- |
+| 1 | `test/pytest-suite` | A real test suite | — |
+| 2 | `refactor/nomenclature` | One word for a cuttable outline, plus a glossary | 1 |
+| 3 | `feat/pixel-size-estimated` | Estimate the scale; ask only when we cannot | 1 |
+| 4 | `feat/minimum-area-filter` | Per-class minimum area, default 150 µm² | 3 |
+| 5 | `feat/plate-control` | Start well, and an editable plate grid | 1 |
+
+---
+
+## PR 1 — `test/pytest-suite`: a real test suite
+
+**Why now.** `decisions.md` 006 and 008 deliberately deferred this until asked, on the grounds
+that the code was too entangled with `st.session_state` to test well. That is no longer true:
+since Phase 0 the library layer is pure, and round one accumulated **nine verification scripts
+with roughly 130 assertions** that already exercise it. They live in a scratchpad and vanish
+with the session, which is the wrong place for the only checks this app has.
+
+**What.** Convert them into `tests/`, one module per concern:
+
+```
+tests/
+  test_geojson.py      reading, QC, multi-class, MultiPoint, unused columns
+  test_plate.py        wells, layouts, assignment, saw parsing
+  test_qc.py           triangle, saw validation, pixel-size comparison
+  test_stats.py        per-class statistics, display rounding
+  test_budget.py       modes, feasibility, group keys
+  test_selection.py    spread, interleaving, adjacency, determinism
+  test_export.py       cut order, path stats, tolerance, bundle contents
+  test_model.py        CollectionPlan, plan builders, exclusion classification
+  test_golden.py       runs tools/golden_harness.py check
+  conft.py             fixtures: the demo files, a synthetic touching chain
+```
+
+**Details that matter:**
+
+- The statistical assertions (spread quality, interleaving) must stay **baseline-relative**, not
+  absolute — a single draw against its own 95th percentile fails 5% of the time by construction,
+  which is a lesson already paid for once in Phase 4.
+- The synthetic fixtures are load-bearing and should be committed as *generators*, not files: the
+  20-square touching chain, and small QuPath-shaped exports. The real 83.7 MB export stays out of
+  the repo.
+- Mark the slow ones (`@pytest.mark.slow`) so the default run stays quick.
+- `pytest` and `pytest-cov` are already in the dev group; nothing new to install.
+
+**Also worth deciding in this PR:** whether to add CI. A GitHub Action running `pytest` and the
+golden harness on every PR would enforce this automatically, which is the point of having tests.
+Left as a question rather than assumed.
+
+**Supersedes** 006 and 008 explicitly.
+
+---
+
+## PR 2 — `refactor/nomenclature`: one word, and a glossary
+
+**The problem.** The same thing is called a **shape**, a **polygon** and an **object** across the
+code, the UI and the docs. `n_shapes_kept`, `POLYGON_LIMIT`, "unclassified objects" — all three
+appear within a few lines of each other.
+
+**Proposal: "shape" is the canonical term** for one cuttable outline.
+
+- It is what **py-lmd** calls them (`new_shape`, `Collection.shapes`), and py-lmd is what
+  actually cuts.
+- It is already the dominant term in this codebase.
+- It does not collide with either of the other two meanings, which stay useful:
+  - **object** — reserved for QuPath's vocabulary when discussing the input file, because that is
+    what QuPath's own UI says (annotation objects, cell objects, detection objects).
+  - **polygon** — reserved for the *geometry type*, alongside MultiPolygon and LineString.
+
+So: "QuPath exports **objects**; we read them as **shapes**, each with a **Polygon** geometry;
+the LMD cuts **shapes**."
+
+**What changes.** `POLYGON_LIMIT` → `SHAPE_LIMIT`; UI strings saying "objects" where they mean
+cuttable shapes; docstrings; `facts.md`. A `GLOSSARY.md` at the root defines shape, object,
+polygon, class, group, replicate, well, calibration point, collection, plan — linked from
+`README.md` and `CLAUDE.md`.
+
+**Risk.** A wide, mechanical diff touching almost every file, which is exactly why it comes after
+PR 1. It changes no behaviour, so the golden harness should stay green throughout — if it does
+not, something was renamed that was not a name.
+
+---
+
+## PR 3 — `feat/pixel-size-estimated`: estimate first, ask only when necessary
+
+**The question Jose raised:** when *can't* we estimate the scale? Answered from real data:
+
+| situation | estimable? |
+| --- | --- |
+| Cell/detection export **with** measurements | **Yes** — median ratio 0.9998, spread 0.23–0.66% |
+| Cell export **without** measurements | No — QuPath only includes them if the user ticks the box |
+| Annotation-only export | No — annotations carry no area measurements |
+
+So it cannot be removed outright: **the first `Exemplar001` export had no measurements at all**,
+and annotation-only files never will. But the estimate is excellent when available, and it is
+available whenever the user ticks one box.
+
+**Proposal — invert the current design** (`decisions.md` 011, which had the app ask and merely
+cross-check):
+
+1. If the file supports an estimate, **use it**, stated plainly with the object count and spread.
+2. **Move the input next to the area budget control**, not a step of its own. Previous users were
+   confused about why the app wanted a pixel size at all; sitting beside "budget by area" it
+   explains itself, because that is the only thing it feeds. A small number input with a help
+   icon carrying the longer explanation and the magnification reference table.
+3. Warn if the spread across objects is wide (say >2%), since that is the signature of a mixed or
+   rescaled export rather than a clean one.
+
+**Consequence for the step order.** Step 4 disappears as a separate step and the cell workflow
+becomes: 4 classes → 5 replicates, budgets and scale → 6 plate → 7 selection → 8 export. The
+scale stops being a gate the user must pass before seeing anything.
+
+**Why this is now the better trade.** 011 chose explicit entry so nobody accepts a derived number
+unread. In practice the estimate has been right every time it could be computed, and the input is
+the step users stumble on. It also matters more than it did: PR 4's default minimum area is in
+µm², so without a scale that default means nothing — auto-estimating makes it work out of the box.
+
+**Supersedes** 011, and refines 029 and 038 (which established that nothing *requires* the scale).
+
+---
+
+## PR 4 — `feat/minimum-area-filter`: per class, default 100 µm²
+
+**Why.** Microdissection cannot reliably collect below a certain area, and that floor is real
+regardless of what the user asks for. Different biologies have genuinely different sizes, so one
+global number is wrong — which is why the global floor added in Phase 2 was removed again
+(`decisions.md` 034), with the note that it belonged per class alongside the budgets.
+
+**What.** In the per-class editor, a column for **minimum area (µm²), default 100** — Jose's
+figure, on the grounds that collecting less tissue than that reliably is very difficult.
+
+**The filter applies before anything is measured.** Jose was explicit: it runs *pre* per-replicate
+area measurement, so every figure the user sees is post-filter. Concretely, the order is:
+
+1. Filter each class by its minimum area.
+2. Compute per-class statistics — count, total area, median — **on what survives**.
+3. Compute feasibility against those post-filter figures.
+4. Select from the filtered pool.
+
+That ordering is the whole point: it makes "available area" mean *collectable* area. Getting it
+wrong in the other direction — filtering after the statistics — would show the user an amount
+they cannot actually have, which is exactly the class of error this app exists to prevent.
+
+**Other details:**
+
+- **Report the exclusions per class**, as counts and as a share, before the user commits.
+- Zero disables it, for a user who wants everything.
+- Recorded in `provenance.json` per class.
+- On the real export at 0.6535 µm/px, `Immune cells` has a median of 87.7 µm² and `Tumor` 142.8 —
+  so a 100 µm² floor removes roughly half the immune cells. Not cosmetic, and worth seeing on
+  screen before it silently changes what a budget can deliver.
+
+**Depends on PR 3**, because a µm² default is meaningless without a scale, and asking every user
+to type one before the default filter works would be a step backwards. It also depends on PR 3's
+relocation of the scale input: the filter and the scale both belong beside the budgets, since all
+three are about how much tissue ends up in a well.
+
+---
+
+## PR 5 — `feat/plate-control`: start well, and an editable plate
+
+Two related things, both about how classes reach wells.
+
+### Start well
+
+**What.** An input for the first well to fill; assignment proceeds from there through the usable
+wells in order.
+
+**Why.** This is the multi-slide-into-one-plate problem (round one open question 5,
+`decisions.md` 020) solved the simple way: process slide 1 from `B2`, note that it ended at
+`B9`, then process slide 2 from `B10` into the same plate. No cross-file state, no new concepts.
+The app should **report the last well used** so the next run's starting point is obvious, and
+warn if the range would overflow the plate.
+
+### Editable plate, not drag-and-drop
+
+**Researched.** Streamlit has **no native drag-and-drop** of items into a grid.
+[`streamlit-sortables`](https://github.com/ohtaman/streamlit-sortables) does do multi-container
+drag (pip-installable, no build step, Apache 2.0, ~137 stars) but its model is items between a
+handful of named buckets — with 384 wells as drop targets it would be unusable. A genuine plate
+drag-and-drop means a custom React component: a build step, a frontend to maintain, and more
+weight on a deployment we have just spent a PR slimming down.
+
+**Proposal instead: make the plate itself editable** with `st.data_editor` and a
+`SelectboxColumn` per well, so each cell offers a dropdown of the user's classes. This is direct
+manipulation of the actual plate grid, with **no new dependency**, and it is *better* than dragging
+for correctness — a dropdown cannot produce a typo or a class that does not exist.
+
+**If that proves insufficient**, `streamlit-sortables` remains a fallback for a coarser
+"drag classes into groups" step, to be decided on evidence rather than now.
+
+---
+
+## 6. Open questions for round two
+
+1. ~~CI?~~ **Settled: yes.** Jose delegated the design; PR 1 includes a GitHub Action and the
+   tests are to state plainly what is broken when they fail.
+2. ~~Is 150 µm² right?~~ **Settled: 100 µm².** Still worth watching whether one default across
+   biologies is right, given `Immune cells` sits below it on the real export.
+3. **Do the well dropdowns actually feel good?** Jose is not convinced. Build it, look at it, and
+   be willing to throw it away — the fallback is the read-only plate we have now plus the start
+   well from PR 5, which already covers the multi-slide case.
+4. **Does the estimated pixel size need an audit trail** beyond `provenance.json` — e.g. stated on
+   the QC image — given PR 3 makes it the default rather than something the user typed?
+5. **Dilation** is still unanswered from round one, and still shapes what "adjacent" means.
