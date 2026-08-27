@@ -36,6 +36,26 @@ dev = [
 requires = ["uv_build>=0.8.13,<0.9.0"]
 build-backend = "uv_build"
 
+###############
+### TESTING ###
+###############
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# Fail on an unknown marker rather than silently skipping, and show the slowest tests so the
+# suite does not quietly get slower.
+addopts = "--strict-markers --durations=5"
+# Make the repo root importable, so `tests` resolves as a package regardless of how the
+# environment was created.
+pythonpath = ["."]
+markers = [
+    "slow: exercises the whole pipeline or shells out; excluded by `-m 'not slow'`",
+]
+filterwarnings = [
+    # py-lmd's Collection.plot calls plt.show(), which Agg cannot honour. Harmless and not ours.
+    "ignore:FigureCanvasAgg is non-interactive:UserWarning",
+]
+
 ##############################
 ### FORMATTING AND LINTING ###
 ##############################
