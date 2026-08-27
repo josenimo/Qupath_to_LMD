@@ -19,7 +19,7 @@ Two workflows: **annotations**, the standard where every classified annotation i
 
 ## Streamlit webapp
 
-Go to [Streamlit Webapp Link](https://qupath-to-lmd-mdcberlin.streamlit.app/)
+Go to [Streamlit Webapp Link](https://qupath-to-lmd.streamlit.app/)
 
 <a href="https://qupath-to-lmd-mdcberlin.streamlit.app/">
   <img src="assets/webapp_cells_workflow.gif" alt="Open WebApp" width="700"/>
