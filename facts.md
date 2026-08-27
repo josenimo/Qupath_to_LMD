@@ -115,7 +115,8 @@ Verified against both demo files.
 - `Collection` does **no** cut-path optimization. `lmd.lib` does export
   `tsp_greedy_solve(node_list, k=100, return_sorted=False)` (returns indices) and
   `tsp_hilbert_solve(data, p=3)`, but only the mask-based `SegmentationLoader` calls them.
-  To order shapes we must call the solvers ourselves before `new_shape`.
+  To order shapes we must call the solver ourselves before `new_shape`. Only the Hilbert
+  solver is used; greedy needs `umap-learn` and is not offered (`decisions.md` 053).
 - `SegmentationLoader`'s config is the field's vocabulary for shape processing —
   `shape_dilation`, `shape_erosion`, `binary_smoothing`, `convolution_smoothing`,
   `poly_compression_factor`, `path_optimization`, `hilbert_p`. It operates on label masks,
@@ -327,18 +328,17 @@ Both workflows expose the same two, in the shared export step.
 - **Smoothing tolerance**, in pixels, default 1.0 — unchanged from what the app has always
   used (`decisions.md` 019). Measured on 900 real shapes: tolerance 0 gives 12 432 vertices,
   1.0 gives 7 938, 5.0 gives 4 586.
-- **Cutting order** (`export.PathOrder`), default **`GREEDY`** — the option that minimises
+- **Cutting order** (`export.PathOrder`), default **`HILBERT`** — the option that minimises
   stage movement, not the one that preserves historical output (`decisions.md` 047), because
   stage movement between shapes is a leading cause of cutting misalignment.
-  - `GREEDY` — grouped by well, path within each well shortened with py-lmd's
-    `tsp_greedy_solve` (nearest-neighbour over a k-NN graph). **Default.**
-  - `HILBERT` — grouped, shortened with `tsp_hilbert_solve` at order 7.
+  - `HILBERT` — grouped by well, path within each well shortened with py-lmd's
+    `tsp_hilbert_solve` at order 7. **Default.**
   - `GROUPED` — all of a well's shapes together, wells visited in plate order, no shortening.
   - `NONE` — the order shapes were loaded in; what the app did before Phase 5.
 - Measured on 900 shapes across 9 wells: load order needs **759 collector movements** and
   346 038 px of stage travel. Grouping gives 8 movements but *lengthens* travel to 392 877 px
-  because it ignores position within a well. Hilbert gives 213 295 px (62%); greedy gives
-  **197 563 px (57%)** and is faster, which is why it is the default.
+  because it ignores position within a well. **Hilbert gives 213 295 px (62%)** with 8
+  movements, and is the default.
 - **What will not be cut is reported by cause, not by count** (`decisions.md` 048).
   `CollectionPlan.not_selected` is shapes with no group — deliberate in the cell workflow, a
   likely mistake in the annotations workflow, so the cell workflow states it in a caption and
@@ -354,18 +354,18 @@ Both workflows expose the same two, in the shared export step.
   exception at 30 755→31 066 px: with 124 wells for 128 shapes almost every shape has its own
   well, so travel is dominated by well order and there is nothing within a well to shorten.
   Its collector movements still drop 126→123.
-- **`tsp_greedy_solve` needs `umap-learn`**, which it imports lazily at
-  `lmd/segmentation.py:120` and which is *not* a py-lmd dependency — calling it without it
-  raises `ModuleNotFoundError`. It is now a declared dependency; it adds umap-learn,
-  pynndescent, scikit-learn, joblib and threadpoolctl (numba was already required). `k` is
-  clamped to `len(points) - 1` so small wells do not trip pynndescent's `n_neighbors` warning.
-- **Greedy has a numba cold start**: the first call in a process took 14.7 s while numba
-  compiled, then 0.1–0.6 s. It only runs on a button press, and the help text warns about it.
+- **py-lmd's `tsp_greedy_solve` is deliberately not offered** (`decisions.md` 053). It gave
+  ~8% shorter travel than hilbert (197 563 px vs 213 295 px) but needs `umap-learn`, which it
+  imports lazily at `lmd/segmentation.py:120`. That cost ~354 MB of numba JIT on first use
+  against hilbert's 33 MB, ~15 s of cold start, and five extra packages reinstalled on every
+  Community Cloud reboot. Removed entirely rather than hidden, so there is no code path whose
+  dependency is absent — the Phase 5 harness asserts `PathOrder` has no `GREEDY` and that
+  `umap` will not import.
 - Hilbert cost by shape count at order 7: 0.06 s at 100, 0.33 s at 900, 0.93 s at 2 700,
   2.70 s at 8 000. Lower orders are faster but markedly worse above ~1 000 shapes.
-- Both solvers print progress to stdout and greedy can warn; both are silenced in
-  `_solve_within_well`, and a solver returning anything other than a permutation is logged and
-  ignored rather than allowed to drop or duplicate shapes.
+- The solver prints progress to stdout, which is silenced in `_solve_within_well`, and a
+  solver returning anything other than a permutation is logged and ignored rather than allowed
+  to drop or duplicate shapes.
 
 ## Session state keys
 
@@ -515,11 +515,10 @@ yields) with these figures and instructions for running locally (`decisions.md` 
   `requirements.txt` is reinstalled on each reboot** — there is no documented wheel cache — so
   each package added lengthens every cold start.
 - **The data is cheap; the imports are not.** Memory attribution: bare Python 14 MB, +geopandas
-  and pandas 100 MB, +`lmd.lib` and matplotlib 243 MB, **+greedy's first call 597 MB**, +the whole
-  83.7 MB GeoJSON 674 MB. The frame itself is only 39 MB, 36 MB of which is the `measurements`
-  strings. So most of the footprint is libraries, and the single largest item is the numba/umap
-  JIT behind the greedy solver — about **354 MB, paid once per process on the first export**.
-  Hilbert's first call costs 33 MB by comparison.
+  and pandas 100 MB, +`lmd.lib` and matplotlib 243 MB, +the whole 83.7 MB GeoJSON ~320 MB. The
+  frame itself is only 39 MB. So most of the footprint is libraries, which is why removing
+  `umap-learn` (`decisions.md` 053) mattered more than anything done to the data: the real
+  export now peaks at **392 MB**, down from 767 MB before Phase 6.
 - **What runs on every rerun** was the thing to fix, since Streamlit re-executes the whole script
   on every widget change: `selection.select` (1.40 s at 150 000 shapes) and `pixel_size_qc`
   (0.28 s on the real file). Both are now cached in the UI layer, along with `class_statistics`,

@@ -895,3 +895,21 @@ different decision from which default to ship.
 every shape's well are unchanged and only the order differs. The Phase 5 check now asserts the
 *intent* — the default shortens the path and is not the JIT-heavy solver — rather than pinning a
 particular value.
+
+## 053 — Greedy is removed entirely, not just un-defaulted
+**Date:** 2026-08-27 · **Status:** active · **supersedes 047's dependency addition and 052**
+**Decision:** Jose's call: hilbert is enough. `umap-learn` is removed from `pyproject.toml` and
+`requirements.txt`, and `PathOrder.GREEDY` is removed from the enum and the dropdown.
+**Why:** 052 kept greedy selectable, which meant every Community Cloud cold boot still installed
+umap-learn, pynndescent, scikit-learn, joblib and threadpoolctl — five packages, reinstalled on
+every reboot with no wheel cache — for an option almost nobody would pick once it was no longer
+the default. The 8% shorter travel never justified that.
+**Why removed rather than hidden:** with the dependency gone, a `GREEDY` member left in the enum
+would be a code path that raises `ModuleNotFoundError` if anything ever reached it — a landmine
+for whoever next reads the file. Removing the member makes the absence checkable, and the Phase 5
+harness now asserts both that `PathOrder` has no `GREEDY` and that `umap` will not import.
+**Measured outcome:** five packages out of the deployed requirements; the real export's peak fell
+to **392 MB**, less than half the 767 MB before Phase 6 began. Goldens unchanged, because hilbert
+was already the default from 052.
+**What was given up:** about 8% of stage travel against greedy. Hilbert still delivers the large
+win — 62% of the unordered path length and 8 collector movements instead of 759.

@@ -595,8 +595,7 @@ def export_step(settings: dict, build_plan, step: str = "6") -> None:
 
 
 PATH_ORDER_LABELS = {
-    export.PathOrder.HILBERT: "Shortest path within each well — space-filling curve (recommended)",
-    export.PathOrder.GREEDY: "Shortest path within each well — nearest-neighbour, ~8% shorter but slow to start",
+    export.PathOrder.HILBERT: "Shortest path within each well (recommended)",
     export.PathOrder.GROUPED: "Group each well together, no path shortening",
     export.PathOrder.NONE: "As loaded — no reordering (what this app did before)",
 }
@@ -634,10 +633,7 @@ def _export_parameters(step: str) -> tuple[float, export.PathOrder]:
                 "movement between shapes is a leading cause of cutting misalignment. Grouping "
                 "a well's shapes together means the collector moves once per well instead of "
                 "once per shape; shortening the path within each well cuts how far the stage "
-                "travels between cuts. None of this changes which tissue lands in which well. "
-                "The nearest-neighbour option is marginally shorter but needs around 15 seconds "
-                "and several hundred MB to start up the first time in a session, so the "
-                "space-filling curve is the default."
+                "travels between cuts. None of this changes which tissue lands in which well."
             ),
         )
 
