@@ -1041,3 +1041,128 @@ those names come from QuPath and shapely and must match. Also `frame.shape`, whi
 **Noted, not fixed:** `README.md` still describes only the annotations workflow and never mentions
 cell segmentation. That is a real gap but it is a documentation rewrite, not a rename, and belongs
 in its own PR.
+
+## 060 — A per-class minimum collectable area, applied before anything is measured
+**Date:** 2026-08-27 · **Status:** active · supersedes the global floor removed in 034
+**Decision:** Each class gets a **minimum area in µm², default 100** — Jose's figure, on the
+grounds that collecting less tissue than that reliably is very difficult. It is a **filter**, and
+it runs **before** statistics, feasibility and selection.
+**Why the ordering is the whole point:** Jose was explicit that the filter applies pre-measurement,
+so the figures show available area *after* filtering. That makes "available" mean *collectable*.
+The opposite ordering would show a user an amount they cannot have, which is precisely the class of
+error this app exists to prevent. Concretely: filter, then per-class statistics on what survives,
+then feasibility against those figures, then select from the filtered pool.
+**Why per class:** 034 removed a global floor with the note that it belonged per class alongside
+the budgets, because different biologies genuinely differ in size. On the real export at
+0.6535 µm/px, `Immune cells` has a median of 87.7 µm² and `Tumor` 142.8 — one number cannot be
+right for both.
+**Details:** the suggested per-replicate amounts are computed from the post-default-floor pool, so
+they do not describe shapes that are about to be filtered out. Zero disables the filter for a
+class. Without an image scale nothing is filtered and the column is hidden, because a µm² floor
+cannot be evaluated — the editor says so rather than silently doing nothing. The plan is still
+built from the whole frame so filtered and unselected shapes stay reportable. Floors are recorded
+per class in `provenance.json`.
+**Measured:** on `Single_cells.geojson` a 100 µm² floor excludes 21 of 121 shapes and lifts the
+surviving median from 157 to 170 µm².
+**Still open** (`ROADMAP.md` round-two question 2): whether one default across biologies is right.
+It is wrong for `Immune cells` on the real export, and a default that is wrong for most classes
+trains users to change it, which defeats the purpose.
+
+## 061 — A start well, which is how several slides reach one plate
+**Date:** 2026-08-27 · **Status:** active · answers the question deferred in 020
+**Decision:** `plate.wells_from(wells, start_well)` returns the usable wells from a chosen one
+onwards, exposed as a "Start at well" input beside the other plate options. The plate caption
+reports the range used and names the well to begin the next slide from.
+**Why this solves multi-slide-into-one-plate:** run slide one from `B2`, read off that it ended at
+`B9`, run slide two from `B10` into the same plate. No cross-file state, no new concepts, and
+nothing to remember between sessions beyond a well name the app tells you. 020 deferred the
+problem as needing thought; this is the version that needs none.
+**Degrades rather than fails:** an unknown or unusable start well — a typo, or a well the margin
+excludes — returns the full list with a warning, because silently collecting nothing or half a
+plate is worse than ignoring the input.
+**Verified end to end:** two consecutive assignments into one plate reuse no wells.
+
+## 062 — The plate is editable by hand, opt-in
+**Date:** 2026-08-27 · **Status:** active · implements the alternative chosen in 055
+**Decision:** `ui_shared.editable_plate` shows the plate as an `st.data_editor` with a dropdown of
+samples per well, behind a checkbox that defaults to off. Ticking it switches from the automatic
+assignment to whatever the user arranges.
+**Why opt-in:** the automatic assignment is almost always what the user wants, and an editor shown
+unasked invites fiddling with something that was already correct. Off by default costs one click
+for the people who need it and nothing for everyone else.
+**Why a dropdown and not drag-and-drop:** 055 settled that — Streamlit has no drag-and-drop into a
+grid, `streamlit-sortables` cannot address 384 wells as targets, and a real plate drag-and-drop
+means a custom frontend on a deployment we spent a PR slimming. A dropdown is also *safer*: it
+cannot produce a typo or name a sample that does not exist.
+**Guards:** it errors if a sample has been dropped off the plate entirely, naming which, and warns
+if two share a well. Both are recoverable by unticking the box.
+**Jose is not convinced by dropdowns**, and said to build it and look. If it reads badly the
+fallback costs nothing: remove the checkbox and the automatic layout plus the start well already
+cover the multi-slide case.
+
+## 063 — "object" and "polygon" never appear in a message to the user
+**Date:** 2026-08-27 · **Status:** active · **corrects 059**
+**Decision:** Jose's correction. Every count the app *shows* says **shapes**, including counts of
+things dropped while reading. "object" survives in code and documentation, where the QuPath
+distinction is real; "polygon" survives for the geometry type, and appears in a message only to
+explain why something cannot be cut. The upload summary now reads "This file holds 14,145 shapes
+and 3 named calibration points" instead of "Geometries in file: 14145 Polygons, 3 Points".
+**Why 059 was wrong:** it drew the line between "QuPath's object" and "our shape" and applied that
+line to the interface as well as the code. Internally coherent, but it produced a screen where the
+same 14,145 things were called Polygons, then shapes, then objects within a few lines — which is
+exactly the confusion the glossary was written to remove. The distinction is real in the code and
+invisible in a message.
+**What changed:** nine user-facing strings, the geometry-count line, and the log lines for
+consistency. Nothing about the code's internal vocabulary or `objectType`.
+**Made enforceable:** `tests/test_nomenclature.py` now fails if any `ui_*` module shows the user
+the word "object" (excluding `objectType` and "objective") or reports a count of geometry types.
+The earlier version only checked that "shapes" appeared *somewhere*, which is why this slipped
+through a PR whose entire purpose was naming.
+**Found while fixing it, and fixed too:** a point with no name cannot be chosen as a calibration
+point, and was being dropped without a word. A user who drew three points but did not name them
+saw "This file has no calibration points" — while looking at their points. The report now carries
+`n_unnamed_points` and the app says to name them in QuPath's annotation list.
+
+## 064 — the GeoJSON check is one table, not a stack of warnings
+**Date:** 2026-08-27 · **Status:** active
+**Decision:** Jose's report: "the warnings are not nice to look at. They are somewhat verbose and
+people might ignore them." `upload_step` now shows one line about what the file holds, then a
+three-column table (`GeojsonReport.summary()`) — *In the file*, then each finding that applies —
+with a plain-language "What happens" for each row. No per-class or per-shape breakdown at this
+step. **The surviving count is not a row**: Jose asked for it to come from the `st.success`
+line instead, which already said it. Two figures for the same thing on one screen makes the
+reader work out which is authoritative, so the table states the file total and the deductions
+and the success line states the answer.
+**Why:** the previous screen could stack six `st.warning` boxes before the user reached Step 2.
+Everything in them was true and rule 3 says to show it, but a wall of yellow is skimmed, and a
+skimmed warning informs nobody. Rule 3 requires the loss to be *visible*, not to be shouted. A
+table of five rows is read; six boxes are scrolled past.
+**What is deliberately not in the table:** the names of multi-class combinations and the
+MultiPolygon listing. Those are per-class detail, and the class table in Step 4/5 is where a user
+is actually deciding about classes. The `--` joining rule stays in the table's note, because it
+explains a class name they will see later and would otherwise not recognise.
+**Still a warning box:** unnamed points. That is about calibration, not about shapes, and it
+decides whether the user gets past the hard stop at Step 3.
+**Guard:** `tests/test_geojson.py` asserts a clean file yields exactly one row (no rows of
+zeros — the noise this replaced), that no row restates the surviving count, and that the
+"ignored" rows sum exactly to
+`n_shapes_in_file - n_shapes_kept`, so no drop cause can go unexplained.
+
+## 065 — the size filter reports itself in the feasibility table, not in prose
+**Date:** 2026-08-27 · **Status:** active · **extends 060**
+**Decision:** Jose: "that whole box of text is too much and cuts the flow a bit… I think adding
+two columns to the bottom table could communicate this info." `_report_minimum_area` is gone.
+`budget.feasibility` takes an optional `excluded` series and adds **Too small to collect** (count)
+and **% too small** (share of that class's own shapes) to the table already on screen. One caption
+under it gives the total and says the minimum area can be changed.
+**Why:** the box appeared in the middle of the step where the user is typing replicates and
+amounts, so it interrupted the decision it was meant to inform. The information is per class, and
+there was already a per-class table three lines below it — putting it there costs no vertical space
+at all and lets the user compare classes, which the prose list did not.
+**The share is of the class, not of the file.** A class that loses 80% of itself must read 80%. As
+a share of the file the same loss could read 2% and the user would sign off on a replicate with
+almost nothing in it.
+**Fixed while doing it:** raising one class's floor above every shape in it dropped that class from
+the pool and `feasibility` then raised `KeyError` on `stats.at[...]` — a traceback instead of the
+app, one keystroke away in an editable column. A class absent from the pool now reads as zero
+available, 100% too small.

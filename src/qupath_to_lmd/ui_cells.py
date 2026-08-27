@@ -28,6 +28,15 @@ def _shape_fingerprint(gdf) -> tuple:
     )
 
 
+MINIMUM_AREA_COLUMN = "Minimum area (µm²)"
+
+
+@st.cache_data(show_spinner=False)
+def _filtered_statistics(_pool, floors: tuple, pixel_size_um: float | None):
+    """Statistics for the post-filter pool, cached on the floors that produced it."""
+    return stats.class_statistics(_pool, pixel_size_um=pixel_size_um)
+
+
 @st.cache_data(show_spinner=False)
 def _cached_statistics(_gdf, cache_key: tuple, pixel_size_um: float | None):
     """Per-class statistics, cached so a rerun does not recompute them (twice)."""
@@ -50,17 +59,23 @@ def class_selection_step(pixel_size_um: float | None, step: str = "5") -> list[s
     gdf = st.session_state.gdf
 
     st.markdown(f"## Step {step}: Choose which classes to collect")
-    if pixel_size_um:
+    _, source = ui_shared.resolve_pixel_size()
+    if pixel_size_um and source == "estimated":
         st.markdown(
-            "Areas below are computed from the shapes themselves and the image scale you "
-            "entered, so they are real areas of tissue. Use them to judge what is worth "
-            "collecting before deciding on amounts."
+            f"Areas are computed from the shapes themselves at **{pixel_size_um:.4f} µm/px**, "
+            "estimated from this file's own QuPath measurements. You can change the scale in "
+            "the next step if it is wrong."
+        )
+    elif pixel_size_um:
+        st.markdown(
+            f"Areas are computed from the shapes themselves at **{pixel_size_um:.4f} µm/px**, "
+            "the scale you entered."
         )
     else:
         st.markdown(
-            "Without an image scale only shape counts can be shown, which is all you need if "
-            "you intend to collect a number of cells. Enter a scale above if you would rather "
-            "work in areas."
+            "This file carries no measurements to estimate an image scale from, so amounts are "
+            "in numbers of shapes. That is all you need to collect a number of cells; enter a "
+            "scale in the next step to work in areas."
         )
 
     table = _cached_statistics(gdf, _shape_fingerprint(gdf), pixel_size_um)
@@ -122,31 +137,43 @@ def overview_step(selected: list[str]) -> None:
     )
 
 
-def _budget_mode(pixel_size_um: float | None) -> budget.BudgetMode:
-    """Let the user choose what a budget counts. Area needs a scale; cells never do."""
+def _budget_mode() -> tuple[budget.BudgetMode, float | None]:
+    """Choose what a budget counts, with the image scale beside it.
+
+    The scale sits here rather than in a step of its own because this is the only thing it
+    feeds: an area budget. Users were confused about why the app asked for it at all
+    (`decisions.md` 057).
+    """
     labels = {
-        budget.BudgetMode.CELLS: "Number of cells per replicate",
+        budget.BudgetMode.CELLS: "Number of shapes per replicate",
         budget.BudgetMode.AREA: "Area of tissue per replicate (µm²)",
     }
-    options = [budget.BudgetMode.CELLS]
-    if pixel_size_um:
-        options.append(budget.BudgetMode.AREA)
-    else:
-        st.caption(
-            "Budgeting by area needs the image scale from step 4. Collecting by number of "
-            "cells works without it."
+    mode_column, scale_column = st.columns([3, 2])
+
+    with scale_column:
+        pixel_size_um = ui_shared.pixel_size_control()
+
+    with mode_column:
+        options = [budget.BudgetMode.CELLS]
+        if pixel_size_um:
+            options.append(budget.BudgetMode.AREA)
+        mode = st.radio(
+            "Budget by",
+            options=options,
+            format_func=lambda mode: labels[mode],
+            key="budget_mode_choice",
+            help=(
+                "Collecting a number of shapes needs nothing else. Collecting a target area "
+                "needs the image scale, since areas are measured from the shapes themselves."
+            ),
         )
+        if not pixel_size_um:
+            st.caption("Enter an image scale to budget by area instead.")
 
-    return st.radio(
-        "Budget by",
-        options=options,
-        format_func=lambda mode: labels[mode],
-        horizontal=True,
-        key="budget_mode_choice",
-    )
+    return mode, pixel_size_um
 
 
-def budgets_step(selected: list[str], pixel_size_um: float | None, step: str = "6") -> list[budget.ClassBudget]:
+def budgets_step(selected: list[str], step: str = "5") -> tuple[list[budget.ClassBudget], float | None]:
     """Replicates and per-replicate amount for each class, with a feasibility check."""
     st.markdown(f"## Step {step}: Replicates and amounts")
     st.markdown(
@@ -154,36 +181,62 @@ def budgets_step(selected: list[str], pixel_size_um: float | None, step: str = "
         "replicates you want and how much goes into each one."
     )
 
-    mode = _budget_mode(pixel_size_um)
+    mode, pixel_size_um = _budget_mode()
     gdf = st.session_state.gdf
-    table = _cached_statistics(gdf, _shape_fingerprint(gdf), pixel_size_um)
-    supply = table.loc[selected, mode.stats_column]
+
+    # The minimum area applies before anything is measured, so the suggested amounts start from
+    # the pool that survives the default floor — otherwise they describe shapes that will be
+    # filtered out a moment later (`decisions.md` 060).
+    default_floor = stats.DEFAULT_MINIMUM_AREA_UM2 if pixel_size_um else 0.0
+    default_floors = dict.fromkeys(selected, default_floor)
+    pool, _excluded = stats.filter_by_minimum_area(gdf, default_floors, pixel_size_um)
+    table = _filtered_statistics(pool, tuple(sorted(default_floors.items())), pixel_size_um)
+    supply = table.reindex(selected)[mode.stats_column].fillna(0)
 
     # Default to the whole class in a single replicate — the same thing the annotations
     # workflow would do — so the starting point is neutral rather than an invented number.
-    editable = pandas.DataFrame(
-        {
-            budget.DISPLAY_COLUMNS[budget.REPLICATES]: 1,
-            budget.DISPLAY_COLUMNS[budget.PER_REPLICATE]: supply.round(stats.DECIMALS),
-        },
-        index=supply.index,
-    )
+    columns = {
+        budget.DISPLAY_COLUMNS[budget.REPLICATES]: 1,
+        budget.DISPLAY_COLUMNS[budget.PER_REPLICATE]: supply.round(stats.DECIMALS),
+    }
+    if pixel_size_um:
+        columns[MINIMUM_AREA_COLUMN] = default_floor
+    editable = pandas.DataFrame(columns, index=supply.index)
+
     # A key tied to the selection and mode, so changing either gives a fresh editor rather
     # than leaving rows from the previous one behind.
     signature = hashlib.md5(("|".join(sorted(selected)) + mode.value).encode()).hexdigest()[:8]
+    editor_config = {
+        budget.DISPLAY_COLUMNS[budget.REPLICATES]: st.column_config.NumberColumn(
+            budget.DISPLAY_COLUMNS[budget.REPLICATES], min_value=1, step=1, format="%d"
+        ),
+        budget.DISPLAY_COLUMNS[budget.PER_REPLICATE]: st.column_config.NumberColumn(
+            f"Per replicate ({mode.unit})", min_value=0.0, format=f"%.{stats.DECIMALS}f"
+        ),
+    }
+    if pixel_size_um:
+        editor_config[MINIMUM_AREA_COLUMN] = st.column_config.NumberColumn(
+            MINIMUM_AREA_COLUMN,
+            min_value=0.0,
+            step=10.0,
+            format=f"%.{stats.DECIMALS}f",
+            help=(
+                "Shapes smaller than this are left out before anything is counted, so every "
+                "figure below describes tissue you can actually collect. Different biologies "
+                "differ in size, so this is per class. Zero keeps everything."
+            ),
+        )
     edited = st.data_editor(
-        editable,
-        width="stretch",
-        key=f"budget_editor_{signature}",
-        column_config={
-            budget.DISPLAY_COLUMNS[budget.REPLICATES]: st.column_config.NumberColumn(
-                budget.DISPLAY_COLUMNS[budget.REPLICATES], min_value=1, step=1, format="%d"
-            ),
-            budget.DISPLAY_COLUMNS[budget.PER_REPLICATE]: st.column_config.NumberColumn(
-                f"Per replicate ({mode.unit})", min_value=0.0, format=f"%.{stats.DECIMALS}f"
-            ),
-        },
+        editable, width="stretch", key=f"budget_editor_{signature}", column_config=editor_config
     )
+
+    floors = (
+        {str(name): float(row.get(MINIMUM_AREA_COLUMN) or 0.0) for name, row in edited.iterrows()}
+        if pixel_size_um
+        else dict.fromkeys(selected, 0.0)
+    )
+    pool, excluded = stats.filter_by_minimum_area(gdf, floors, pixel_size_um)
+    table = _filtered_statistics(pool, tuple(sorted(floors.items())), pixel_size_um)
 
     budgets = [
         budget.ClassBudget(
@@ -194,16 +247,55 @@ def budgets_step(selected: list[str], pixel_size_um: float | None, step: str = "
         for class_name, row in edited.iterrows()
     ]
 
-    _report_feasibility(table, budgets, mode)
+    _report_feasibility(table, budgets, mode, excluded if pixel_size_um else None)
+
     st.session_state.budget_mode = mode.value
     st.session_state.budgets = [vars(item) for item in budgets]
-    return budgets
+    st.session_state.minimum_area_um2 = floors
+    return budgets, pixel_size_um, pool
 
 
-def _report_feasibility(table: pandas.DataFrame, budgets: list[budget.ClassBudget], mode: budget.BudgetMode) -> None:
-    """Show what each class is asked for against what it holds, and warn on shortfalls."""
-    check = budget.feasibility(table, budgets, mode)
-    st.dataframe(budget.for_display(check), width="stretch")
+def _report_feasibility(
+    table: pandas.DataFrame,
+    budgets: list[budget.ClassBudget],
+    mode: budget.BudgetMode,
+    excluded=None,
+) -> None:
+    """Show what each class is asked for against what it holds, and warn on shortfalls.
+
+    What the size filter removed is two columns of this table rather than its own warning box.
+    The box said the same thing at ten times the length, in the middle of the step where the
+    user is typing numbers, so it interrupted the very decision it was meant to inform
+    (`decisions.md` 065).
+    """
+    check = budget.feasibility(table, budgets, mode, excluded=excluded)
+    display = budget.for_display(check)
+    st.dataframe(
+        display,
+        width="stretch",
+        column_config={
+            budget.DISPLAY_COLUMNS[budget.FILTERED_SHARE]: st.column_config.NumberColumn(
+                budget.DISPLAY_COLUMNS[budget.FILTERED_SHARE],
+                format="%.1f%%",
+                help=(
+                    "Share of this class left out for being under its minimum area. Those "
+                    "shapes are gone before anything else here is counted, so every other "
+                    "figure in this row describes tissue you can actually collect."
+                ),
+            ),
+        },
+    )
+
+    if excluded is None:
+        st.caption(
+            "No size filter is applied, because a minimum collectable area needs the image "
+            "scale. Enter one above to set one."
+        )
+    elif int(excluded.sum()):
+        st.caption(
+            f"{int(excluded.sum()):,} shapes were too small to collect and are already left "
+            "out of the figures above. Change a class's minimum area if you disagree."
+        )
 
     short = check[check[budget.SHORTFALL] > 0]
     if not short.empty:
@@ -248,6 +340,7 @@ def capacity_step(budgets: list[budget.ClassBudget], step: str = "7") -> dict:
         )
 
     samples_and_wells = plate.assign_wells(groups, usable, randomize=settings["randomize"])
+    samples_and_wells = ui_shared.editable_plate(samples_and_wells, settings["plate_type"], key_suffix="cells")
     st.session_state.saw = samples_and_wells
     ui_shared.plate_preview(
         samples_and_wells, settings["plate_type"], wells=usable, key_suffix="cells"
@@ -328,7 +421,7 @@ def _selection_params(step: str) -> selection.SelectionParams:
 
 
 @st.fragment
-def selection_step(budgets, settings: dict, pixel_size_um: float | None, step: str = "8") -> None:
+def selection_step(budgets, settings: dict, pixel_size_um: float | None, pool, step: str = "7") -> None:
     """Choose the shapes, preview them, and offer the export.
 
     A fragment, so changing the mode, the seed or the neighbour distance reruns only this step
@@ -340,9 +433,13 @@ def selection_step(budgets, settings: dict, pixel_size_um: float | None, step: s
     params = _selection_params(step)
 
     mode = budget.BudgetMode(st.session_state.budget_mode or budget.BudgetMode.CELLS.value)
-    gdf = st.session_state.gdf
+    # The pool, not the whole file: shapes below their class's minimum area were removed before
+    # anything was measured, so selecting from the full frame would hand back shapes the user
+    # was already told are too small to collect (`decisions.md` 060).
+    gdf = pool
     cache_key = (
         _shape_fingerprint(gdf),
+        tuple(sorted((st.session_state.minimum_area_um2 or {}).items())),
         tuple((item.class_name, item.replicates, item.per_replicate) for item in budgets),
         mode.value,
         params.mode.value,
@@ -396,7 +493,7 @@ def _report_selection(result: selection.SelectionResult, mode: budget.BudgetMode
 
 
 def _preview_selection(result: selection.SelectionResult) -> None:
-    """Draw what will be cut, coloured by replicate."""
+    """Draw what will be cut, coloured by replicate, over every shape in the file."""
     labels = result.replicate_of.map(lambda value: f"replicate {int(value)}" if pandas.notna(value) else None)
     with st.spinner("Drawing the selection..."):
         figure = plot.plot_shapes(
@@ -415,8 +512,9 @@ def _preview_selection(result: selection.SelectionResult) -> None:
 def _export_selection(result, settings: dict, params: selection.SelectionParams, pixel_size_um) -> None:
     """Assign wells, build the plan, and hand off to the shared export step."""
     plan, samples_and_wells = plan_from_selection(
+        # The whole file, so shapes that were filtered out or not selected stay reportable.
         gdf=st.session_state.gdf,
-        replicate_of=result.replicate_of,
+        replicate_of=result.replicate_of.reindex(st.session_state.gdf.index),
         wells=settings["wells"],
         samples_and_wells=settings.get("samples_and_wells"),
         calibration_names=st.session_state.calibs,
@@ -435,34 +533,40 @@ def _export_selection(result, settings: dict, params: selection.SelectionParams,
             "neighbour_distance_px": params.neighbour_distance_px,
             "seed": params.seed,
             "budget_mode": st.session_state.budget_mode,
+            "minimum_area_um2": st.session_state.minimum_area_um2,
             "budgets": st.session_state.budgets,
         },
     )
 
     st.session_state.saw = samples_and_wells
 
-    ui_shared.export_step(settings, lambda _settings: plan, step="9")
+    ui_shared.export_step(settings, lambda _settings: plan, step="8")
 
 
 def render(uploaded_file) -> None:
-    """The cell workflow as far as Phase 3 takes it."""
-    pixel_size = ui_shared.pixel_size_step(step="4")
-    st.divider()
+    """The cell workflow.
 
+    The image scale is no longer a step of its own. Where the file allows it, the scale is
+    estimated from QuPath's own measurements and the class table simply shows areas; the input
+    to override or supply it sits beside the area budget control, which is the only thing it
+    feeds (`decisions.md` 056, 057).
+    """
     if st.session_state.gdf is None:
         st.info("Upload a GeoJSON to continue.")
         return
 
-    selected = class_selection_step(pixel_size, step="5")
+    pixel_size, _source = ui_shared.resolve_pixel_size()
+
+    selected = class_selection_step(pixel_size, step="4")
     if not selected:
         return
     overview_step(selected)
     st.divider()
 
-    budgets = budgets_step(selected, pixel_size, step="6")
+    budgets, pixel_size, pool = budgets_step(selected, step="5")
     st.divider()
 
-    settings = capacity_step(budgets, step="7")
+    settings = capacity_step(budgets, step="6")
     st.divider()
 
-    selection_step(budgets, settings, pixel_size, step="8")
+    selection_step(budgets, settings, pixel_size, pool, step="7")

@@ -23,6 +23,10 @@ PIXEL_SIZE_FORMAT = f"%.{PIXEL_SIZE_DECIMALS}f"
 PIXEL_SIZE_MIN = PIXEL_SIZE_STEP
 PIXEL_SIZE_MAX = 100.0
 
+# Above this, the scale implied by different objects disagrees enough to suggest the export
+# mixes images or was rescaled.
+WIDE_SPREAD = 0.02
+
 # Where the hosted app stops being comfortable. 40 000 shapes is about the most a TMA core
 # yields, so anything much beyond it is whole-slide territory. Figures are measured, not
 # guessed — see `facts.md` and `decisions.md` 051.
@@ -83,37 +87,27 @@ def upload_step(step: str = "1"):
         st.session_state.geojson_report = report
 
     report = st.session_state.geojson_report
-    counts = ", ".join(f"{count} {name}s" for name, count in report.geometry_counts.items())
-    st.write(f"Geometries in file: {counts}")
+    described = f"**{report.n_shapes_in_file:,} shapes**"
+    if report.calibration_point_names:
+        described += f" and {len(report.calibration_point_names)} named calibration points"
+    st.write(f"This file holds {described}.")
 
-    if report.n_unclassified_dropped:
-        st.warning(
-            f"{report.n_unclassified_dropped} objects have no QuPath classification. "
-            "These are unclassified objects and cannot be assigned to a well, so they are ignored."
-        )
-    if report.n_unnamed_classification_dropped:
-        st.warning(
-            f"{report.n_unnamed_classification_dropped} objects have a QuPath classification "
-            "that carries no usable class name, so they cannot be assigned to a well and are "
-            "ignored. If you expected these, check how they are classified in QuPath."
-        )
-    if report.multiclass_counts:
-        total = sum(report.multiclass_counts.values())
-        listed = ", ".join(f"{name} ({count})" for name, count in list(report.multiclass_counts.items())[:6])
-        st.warning(
-            f"{total} objects carry more than one QuPath class. Each combination becomes its "
-            f"own class, with the class names joined by `--`: {listed}. "
-            "These objects are not counted under any of their individual classes — give each "
-            "combination its own well, or reclassify in QuPath if that is not what you want."
-        )
-    if report.n_multipolygons_dropped:
-        st.warning(
-            f"{report.n_multipolygons_dropped} MultiPolygon objects found. These are not supported — "
-            "please split them into single polygons in QuPath. Processing continues without them."
-        )
-        st.table(report.multipolygons)
+    # One table rather than a stack of warning boxes. Six coloured boxes about classification
+    # and geometry got skimmed and then ignored, which defeated the point of showing them at
+    # all; the per-class detail belongs later in the workflow (`decisions.md` 064).
+    st.dataframe(report.summary(), width="stretch")
 
-    st.success(f"File check complete, {report.n_shapes_kept} shapes available.")
+    if report.n_unnamed_points:
+        # Not in the table: this is about calibration, not about shapes, and it decides whether
+        # the user can get past the calibration step at all.
+        st.warning(
+            f"{report.n_unnamed_points} point(s) in this file have no name, so they cannot be "
+            "chosen as calibration points. Name each point annotation in QuPath's annotation "
+            "list and export again."
+        )
+
+    # Carries the surviving count now that the table above does not repeat it.
+    st.success(f"File check complete, {report.n_shapes_kept:,} shapes are ready to collect.")
     _report_scale(report.n_shapes_kept)
     return uploaded_file
 
@@ -255,102 +249,101 @@ def calibration_step(step: str = "3"):
         )
 
 
-def pixel_size_step(step: str = "4") -> float | None:
-    """Ask for µm per pixel and cross-check it against QuPath's own area measurements.
+def resolve_pixel_size() -> tuple[float | None, str]:
+    """The scale in force, and where it came from.
 
-    Optional (`decisions.md` 038): without it, only shape counts and cell-count budgets are
-    available. Required before any *area* figure is shown (`decisions.md` 011). The entered
-    value is never overwritten by the implied one — a mismatch is reported and the user decides.
+    An override the user typed wins; otherwise the value QuPath's own area measurements imply,
+    derived once when the file was read. Returns `(None, "none")` when neither is available —
+    which is normal, because most exports carry no measurements and a user collecting a number
+    of cells never needs a scale (`decisions.md` 038, 056).
     """
-    if st.session_state.gdf is None:
-        return None
+    override = st.session_state.pixel_size_um
+    if override:
+        return float(override), "entered"
 
-    st.markdown(f"## Step {step} (optional): Image scale")
-    st.markdown(
-        "How many micrometres does one pixel of your image cover? QuPath shows this in "
-        "*Image → Image properties → Pixel width*.\n\n"
-        "**Only needed if you want to work in areas.** If you intend to collect a number of "
-        "cells, skip this. Every area figure in the app is computed from this number, so a "
-        "wrong value gives you a correct-looking collection of the wrong amount of tissue — "
-        "which is why it is better left blank than guessed."
+    report = st.session_state.geojson_report
+    if report is not None and report.implied_pixel_size_um:
+        return float(report.implied_pixel_size_um), "estimated"
+
+    return None, "none"
+
+
+def pixel_size_control() -> float | None:
+    """A compact scale input, to sit beside whatever needs a scale.
+
+    Deliberately not a step of its own: users were confused about why the app wanted a pixel
+    size at all. Next to the control that turns amounts into areas, it explains itself, because
+    that is the only thing it feeds (`decisions.md` 057).
+    """
+    current, source = resolve_pixel_size()
+    report = st.session_state.geojson_report
+    estimate = report.implied_pixel_size_um if report is not None else None
+
+    entered = st.number_input(
+        "Image scale (µm per pixel)",
+        min_value=PIXEL_SIZE_MIN,
+        max_value=PIXEL_SIZE_MAX,
+        value=float(current) if current else None,
+        step=PIXEL_SIZE_STEP,
+        format=PIXEL_SIZE_FORMAT,
+        key="pixel_size_input",
+        placeholder="e.g. 0.3467",
+        help=(
+            "How many micrometres one image pixel covers. It is needed only to express amounts "
+            "as areas — collecting a number of shapes does not need it at all.\n\n"
+            "Where to find it: QuPath, *Image → Image properties → Pixel width*.\n\n"
+            "If your file carries QuPath measurements, this is filled in from them and you can "
+            "leave it alone. Magnification does **not** determine pixel size — it is your "
+            "camera's sensor pitch divided by the total magnification, so the same 20× objective "
+            f"spans roughly {stats.SENSOR_PITCHES_UM[0] / 20:.2f}–{stats.SENSOR_PITCHES_UM[-1] / 20:.2f} "
+            "µm/px across common cameras."
+        ),
     )
 
-    # Three things matter for this input to behave:
-    #  - value=None starts it genuinely empty and returns None until the user types, so
-    #    there is no 0.0 sentinel to confuse with a real entry.
-    #  - value= is NOT re-passed on later reruns: with key= set, the widget's own state is
-    #    the source of truth, and re-passing value fights it and snaps the field back.
-    #  - step must match the displayed precision. The rendered HTML input carries
-    #    step as an attribute and browsers snap off-grid entries to it, so a coarser step
-    #    than the format turns a typed 0.3467 into 0.35.
-    input_column, reference_column = st.columns([2, 3])
+    if entered:
+        st.session_state.pixel_size_um = float(entered)
+    elif source == "estimated":
+        st.session_state.pixel_size_um = None
 
-    with input_column:
-        entered = st.number_input(
-            "Micrometres per pixel (µm/px)",
-            min_value=PIXEL_SIZE_MIN,
-            max_value=PIXEL_SIZE_MAX,
-            value=None,
-            step=PIXEL_SIZE_STEP,
-            format=PIXEL_SIZE_FORMAT,
-            key="pixel_size_input",
-            placeholder="e.g. 0.3467",
-            help=(
-                f"Accepted to {PIXEL_SIZE_DECIMALS} decimal places, between {PIXEL_SIZE_MIN} and "
-                f"{PIXEL_SIZE_MAX:g} µm/px. Type the value directly — the arrows step by "
-                f"{PIXEL_SIZE_STEP:g}."
-            ),
-        )
+    value, source = resolve_pixel_size()
+    _report_pixel_size(value, source, estimate, report)
+    return value
 
-    with reference_column:
-        st.markdown("**If you only know the magnification**")
-        st.dataframe(stats.reference_pixel_sizes(), width="stretch")
-        st.warning(
-            "**Magnification does not tell you the pixel size.** Pixel size is your camera's "
-            "sensor pitch divided by the *total* magnification, so the same 20× objective can "
-            "differ by more than 2× between two microscopes — and any additional coupler or "
-            "zoom changes it again. Treat the table as a rough sanity check only, and get the "
-            "real number from QuPath under *Image → Image properties → Pixel width*."
-        )
 
-    if entered is None:
+def _report_pixel_size(value, source, estimate, report) -> None:
+    """Say where the scale came from, and flag a disagreement or a wide spread."""
+    if value is None:
         st.caption(
-            "Left blank. You can still collect by number of cells; areas and area budgets "
-            "stay unavailable until a scale is entered."
+            "No scale, so amounts are in numbers of shapes. Enter one to work in areas instead."
         )
-        return None
+        return
 
-    # The implied scale was computed once when the file was read, so this is free.
-    geojson_report = st.session_state.geojson_report
-    report = qc.compare_pixel_size(
-        entered,
-        geojson_report.implied_pixel_size_um,
-        geojson_report.n_area_measurements,
-        geojson_report.pixel_size_spread,
-    )
-    if report.implied_um_per_px is None:
-        # Measurements are optional on export and most files will not have them, so this is
-        # the normal case. Stating it quietly keeps the real warnings worth reading.
+    if source == "estimated":
         st.caption(
-            "This file carries no QuPath measurements, so the value could not be "
-            "cross-checked automatically. Nothing else needs them."
+            f"Estimated from this file's own QuPath measurements across "
+            f"{report.n_area_measurements:,} shapes (spread {report.pixel_size_spread:.1%}). "
+            "Type over it if you know better."
         )
-    elif report.is_concerning:
-        st.warning(
-            f"Your value is **{report.ratio:.2f}×** what this file implies. QuPath's own area "
-            f"measurements across {report.n_objects_checked} objects imply "
-            f"**{report.implied_um_per_px:.4f} µm/px**. One of the two is wrong — most often "
-            "this is a pixel size read from the wrong image or a factor-of-ten slip. "
-            "You can continue if you are sure."
-        )
+    elif estimate:
+        check = qc.compare_pixel_size(value, estimate, report.n_area_measurements, report.pixel_size_spread)
+        if check.is_concerning:
+            st.warning(
+                f"Your value is **{check.ratio:.2f}×** what this file implies "
+                f"({estimate:.4f} µm/px from {report.n_area_measurements:,} shapes). One of the "
+                "two is wrong — usually a scale read from the wrong image, or a factor-of-ten "
+                "slip. A 2× error in scale is a 4× error in every area."
+            )
+        else:
+            st.caption(f"Agrees with this file's own measurements ({estimate:.4f} µm/px).")
     else:
-        st.success(
-            f"Cross-checked against {report.n_objects_checked} objects: this file implies "
-            f"{report.implied_um_per_px:.4f} µm/px (spread {report.relative_spread * 100:.2f}%)."
-        )
+        st.caption("This file carries no measurements, so the value could not be cross-checked.")
 
-    st.session_state.pixel_size_um = entered
-    return entered
+    if report is not None and report.pixel_size_spread and report.pixel_size_spread > WIDE_SPREAD:
+        st.warning(
+            f"The scale implied by this file varies by {report.pixel_size_spread:.1%} between "
+            "shapes. That usually means the export mixes images, or was rescaled — worth "
+            "checking before relying on any area."
+        )
 
 
 def plate_settings_step(step: str = "5") -> dict:
@@ -362,7 +355,7 @@ def plate_settings_step(step: str = "5") -> dict:
                 """)
     st.write("You can increase plate size by dragging bottom right corner")
 
-    plate_col, margin_col, step_row_col, step_col_col, random_col = st.columns(5)
+    plate_col, margin_col, step_row_col, step_col_col, start_col, random_col = st.columns(6)
     with plate_col:
         plate_string = st.selectbox("Select a plate type", ("384 well plate", "96 well plate"))
     with margin_col:
@@ -371,6 +364,19 @@ def plate_settings_step(step: str = "5") -> dict:
         step_row = st.number_input("Space between rows", min_value=1, max_value=10, value=1)
     with step_col_col:
         step_col = st.number_input("Space between columns", min_value=1, max_value=10, value=1)
+    with start_col:
+        start_well = st.text_input(
+            "Start at well",
+            value="",
+            placeholder="auto",
+            help=(
+                "Fill the plate from this well onwards instead of the first usable one. For "
+                "collecting several slides into one plate: run the first slide, note the last "
+                "well it used, then start the next slide after it. Leave blank to start at the "
+                "beginning."
+            ),
+        )
+
     with random_col:
         randomize = st.toggle(
             "Randomize wells",
@@ -383,15 +389,24 @@ def plate_settings_step(step: str = "5") -> dict:
         )
 
     plate_type = plate_string.split(" ")[0]
+    usable = plate.acceptable_wells(
+        plate=plate_type, margins=margin, step_row=step_row, step_col=step_col
+    )
+    wells = plate.wells_from(usable, start_well)
+    if start_well and wells is usable:
+        st.warning(
+            f"**{start_well}** is not one of the {len(usable)} wells this margin and spacing "
+            "leave usable, so filling starts from the beginning instead."
+        )
+
     return {
         "plate_type": plate_type,
         "margins": margin,
         "step_row": step_row,
         "step_col": step_col,
         "randomize": randomize,
-        "wells": plate.acceptable_wells(
-            plate=plate_type, margins=margin, step_row=step_row, step_col=step_col
-        ),
+        "start_well": start_well.strip().upper() or None,
+        "wells": wells,
     }
 
 
@@ -541,7 +556,21 @@ def plate_preview(
 
     layout = plate.placement_dataframe(samples_and_wells, plate=plate_type)
     st.dataframe(layout.style.map(plate.highlight(set(samples_and_wells))), width="stretch")
-    st.caption(f"{len(samples_and_wells)} wells in use on a {plate_type} well plate.")
+
+    taken = set(samples_and_wells.values())
+    used = sorted(taken, key=lambda well: (well[0], int(well[1:])))
+    caption = f"{len(samples_and_wells)} wells in use on a {plate_type} well plate"
+    if used:
+        caption += f", {used[0]} to {used[-1]}"
+        if wells:
+            # Against the wells, not the group names — comparing with the dict's keys meant
+            # nothing ever matched and the "start at" always named the first usable well.
+            remaining = [well for well in wells if well not in taken]
+            if remaining:
+                caption += f". For another slide into this plate, start at **{remaining[0]}**"
+            else:
+                caption += ". This plate is now full"
+    st.caption(caption + ".")
 
     if wells:
         with st.expander(f"Which wells the current margin and spacing leave usable ({len(wells)})"):
@@ -555,6 +584,66 @@ def plate_preview(
         mime="application/json",
         key=f"saw_download_{plate_type}_{len(samples_and_wells)}_{key_suffix}",
     )
+
+
+def editable_plate(
+    samples_and_wells: dict[str, str],
+    plate_type: str,
+    key_suffix: str = "",
+) -> dict[str, str]:
+    """Let the user move samples between wells by editing the plate directly.
+
+    Streamlit has no drag-and-drop into a grid, and a real one would mean a custom frontend
+    (`decisions.md` 055). Editing the plate in place is the same job done with a dropdown per
+    well, which cannot produce a typo or name a sample that does not exist.
+
+    Opt-in: the automatic assignment is almost always what the user wants, and an editor shown
+    unasked invites fiddling with something that was already correct.
+
+    Returns the assignment to use — the edited one if the user opened the editor, otherwise the
+    one passed in.
+    """
+    if not st.checkbox(
+        "Move samples between wells by hand",
+        value=False,
+        key=f"edit_plate_{key_suffix}",
+        help=(
+            "Opens the plate as an editable table. Pick a sample from any well's dropdown to "
+            "move it there, or clear a well to leave it empty. The automatic layout is used "
+            "unless you change something."
+        ),
+    ):
+        return samples_and_wells
+
+    layout = plate.placement_dataframe(samples_and_wells, plate=plate_type)
+    options = sorted(samples_and_wells)
+    edited = st.data_editor(
+        layout,
+        width="stretch",
+        key=f"plate_editor_{key_suffix}_{len(samples_and_wells)}",
+        column_config={
+            column: st.column_config.SelectboxColumn(column, options=options, required=False)
+            for column in layout.columns
+        },
+    )
+
+    by_well = plate.layout_to_saw(edited)
+    duplicated = [name for name in options if list(by_well.values()).count(by_well.get(name, "")) > 1]
+    placed = set(by_well)
+    missing = [name for name in options if name not in placed]
+
+    if missing:
+        st.error(
+            f"{len(missing)} sample(s) are no longer on the plate and will not be cut: "
+            f"{', '.join(missing[:8])}. Put them back in a well, or untick the box above to "
+            "return to the automatic layout."
+        )
+    if duplicated:
+        st.warning(f"More than one sample shares a well: {', '.join(sorted(set(duplicated))[:8])}.")
+    if not missing and not duplicated:
+        st.success(f"Using your layout: {len(by_well)} samples placed by hand.")
+
+    return by_well
 
 
 def export_step(settings: dict, build_plan, step: str = "6") -> None:

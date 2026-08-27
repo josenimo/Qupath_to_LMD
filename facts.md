@@ -129,8 +129,8 @@ are shared, then the router dispatches to one of two workflows.
 
 **Shared:** 1 upload + QC · 2 workflow choice · 3 calibration points.
 **Legacy then continues:** 4 optional class split · 5 plate layout · 6 process and download.
-**Cells then continues:** 4 image scale (optional) · 5 class statistics and selection ·
-6 replicates and budgets · 7 plate and capacity · 8 selection with preview · 9 export.
+**Cells then continues:** 4 class statistics and selection · 5 replicates, budgets and image
+scale · 6 plate and capacity · 7 selection with preview · 8 export.
 Both workflows reach a downloadable collection, and both share the same export parameters.
 
 Step numbers are passed into the `ui_shared` step functions rather than hard-coded, because
@@ -149,6 +149,14 @@ the two workflows reach the shared steps at different points.
      per shape, so they have no meaning.
    Returns `(gdf, calibration_points, GeojsonReport)`. The report is rendered by the app,
    not by the library.
+   **The app shows it as one table**, not a stack of warnings: `GeojsonReport.summary()`
+   returns a frame — *In the file*, then one row per finding that actually applies — plus a
+   "What happens" note per row (`decisions.md` 064). Rows with a zero count are omitted, so a
+   clean file shows one line. The surviving count is **not** in the table; the `st.success`
+   line under it carries that. The only warning box left at this step is unnamed points, which
+   is about calibration rather than shapes.
+   Invariant, asserted in `tests/test_geojson.py`: the rows whose note says "ignored" sum to
+   `n_shapes_in_file - n_shapes_kept`, so every dropped shape is accounted for on screen.
 1.1 **Calibration selection** — three `st.selectbox`es pick 3 names from the pool, order
    matters. `qc.triangle_qc` returns a `TriangleReport` with the calibration array, the
    triangle area, and the fraction of Polygons/LineStrings intersecting it;
@@ -202,6 +210,16 @@ categoricals × replicate count, cycling 6 hard-coded colours as Java signed int
   annotations suggests the cell workflow, otherwise annotations. It is a **suggestion** —
   the radio is always user-changeable, and legacy is the default before any file is loaded.
   Verified on both demo files (`Single_cells.geojson` → cells, `TD_01…` → legacy).
+- **The scale is estimated, not asked for, wherever the file allows it** (`decisions.md` 056).
+  `ui_shared.resolve_pixel_size()` returns the value and its source: a typed override wins,
+  otherwise the value derived from QuPath's own measurements when the file was read, otherwise
+  nothing. The class table just shows areas without the user entering anything.
+- `ui_shared.pixel_size_control()` is a compact input that sits **beside the area budget
+  control**, not in a step of its own — that is the only thing the scale feeds, and users were
+  confused about why it was being asked for (`decisions.md` 057). It reports where the value came
+  from, warns when a typed value disagrees with the file by more than 5%, and warns when the
+  implied scale varies between objects by more than `WIDE_SPREAD` (2%), which suggests a mixed or
+  rescaled export.
 - Beside the µm/px input sits a reference table from `stats.reference_pixel_sizes()`:
   objectives 4×–63× against two sensor pitches (3.45 and 6.5 µm), each cell being
   `pitch / magnification`. Its purpose is to make the **spread visible** — the 20× row alone
@@ -250,12 +268,14 @@ categoricals × replicate count, cycling 6 hard-coded colours as Java signed int
   shape counts alone and only the *cells* budget mode is offered, with a caption saying why.
   Nothing expressible in cell counts is ever blocked.
 - `budget.BudgetMode` is `CELLS` or `AREA`; `mode.stats_column` maps to `shapes` or
-  `area_total_um2`, and `budget.feasibility` raises `KeyError` if that column is absent —
-  which is how an area budget without a scale fails, loudly, in the library rather than
-  silently in the UI.
+  `area_total_um2`, and `budget.feasibility` raises `KeyError` if that column is absent from a
+  non-empty frame — which is how an area budget without a scale fails, loudly, in the library
+  rather than silently in the UI. A class merely *missing* from the frame is not an error: it
+  reads as zero available, which is what a class filtered away entirely looks like.
 - `budget.feasibility` returns per class: replicates, per-replicate amount, total requested,
   available, shortfall, and **how many whole replicates the class can actually fill**. That
-  last number is the actionable one.
+  last number is the actionable one. Pass `excluded=` and it also reports what the size filter
+  took (see *Minimum collectable area*).
 - Shortfalls **warn and continue** (003) — a user may knowingly accept a partly-filled
   replicate.
 - The per-class editor defaults to **the whole class in a single replicate**, which is what
@@ -264,6 +284,30 @@ categoricals × replicate count, cycling 6 hard-coded colours as Java signed int
   step 7 compares it against the usable wells of the chosen plate and warns if it exceeds them.
 - The `st.data_editor` key is an md5 of the sorted class selection plus the mode, so changing
   either gives a fresh editor instead of leaving stale rows behind.
+
+## Minimum collectable area
+
+- `stats.filter_by_minimum_area(gdf, floors, pixel_size_um)` drops shapes below their class's
+  floor and returns the survivors plus the count excluded per class. Default
+  `stats.DEFAULT_MINIMUM_AREA_UM2` is **100 µm²**, per class because different biologies differ
+  in size (`decisions.md` 060).
+- **Applied before anything is measured.** The order is: filter, then per-class statistics, then
+  feasibility, then selection. So "available" in the feasibility table means *collectable*.
+  Filtering afterwards would show the user an amount they cannot have.
+- The selection draws from the filtered pool, not the whole frame. The plan is still built from
+  the whole frame so filtered and unselected shapes stay reportable, with `replicate_of` reindexed
+  onto it.
+- Without a scale nothing is filtered, because a µm² floor cannot be evaluated — and the editor
+  hides the column and says why.
+- **What it removed is reported as two columns of the feasibility table**, not as its own message:
+  `budget.feasibility(..., excluded=...)` adds `filtered_by_area` (count) and `filtered_share`
+  (percentage of *that class's* shapes), shown as "Too small to collect" and "% too small"
+  (`decisions.md` 065). A caption under the table gives the total.
+- A class whose floor excludes every shape in it is absent from the statistics frame; `feasibility`
+  treats that as zero available and 100% too small, rather than raising `KeyError`.
+- On `Single_cells.geojson` a 100 µm² floor excludes 21 of 121 shapes and lifts the surviving
+  median from 157 to 170 µm².
+- Recorded per class in `provenance.json`.
 
 ## Selection engine (Phase 4)
 
@@ -308,6 +352,15 @@ categoricals × replicate count, cycling 6 hard-coded colours as Java signed int
   2206, which is genuinely unavoidable at 85% of a dense class.
 - **Seed is exposed and recorded** in `provenance.json`, so a selection can be reported in a
   methods section and reproduced.
+- **Start well** (`plate.wells_from`): filling begins at a chosen well instead of the first
+  usable one, which is how several slides reach one plate (`decisions.md` 061). The plate caption
+  reports the range used and names the well to start the next slide from. An unknown or unusable
+  start well degrades to the beginning with a warning, so a typo cannot silently collect nothing.
+- **The plate can be edited by hand**, opt-in behind a checkbox: `ui_shared.editable_plate` shows
+  the plate as an `st.data_editor` with a dropdown of samples per well. Not drag-and-drop —
+  Streamlit has none for grids and a real one would mean a custom frontend (`decisions.md` 055) —
+  and a dropdown cannot produce a typo or name a sample that does not exist. It errors if a sample
+  is dropped off the plate entirely and warns if two share a well.
 - The cell workflow has **no confirm step**: the assignment is recomputed from the current
   plate settings on every rerun, so changing the plate, margin, spacing or randomize toggle
   takes effect immediately and the plate table under the options always shows what will be
@@ -380,6 +433,7 @@ Initialised in the block at the top of `streamlit_app.py`. Any new key belongs h
 | `selected_classes` | classes the cell workflow will collect; `None` means not chosen yet |
 | `budget_mode` | `'cells'` \| `'area'` — what the per-replicate amount counts |
 | `budgets` | list of `ClassBudget` as dicts: class, replicates, per-replicate amount |
+| `minimum_area_um2` | per-class minimum collectable area in µm²; drives the pre-measurement filter |
 | `view_mode` | `'default'` \| `'samples'` — which plate table is rendered |
 | `gdf` | the working GeoDataFrame (points removed, `classification_name` added) |
 | `geojson_report` | `GeojsonReport` from the last read, re-rendered on every rerun |
@@ -411,17 +465,24 @@ Initialised in the block at the top of `streamlit_app.py`. Any new key belongs h
 `GLOSSARY.md` is the reference; the rule is one word per thing (`decisions.md` 059).
 
 - **shape** — one outline the laser will cut. The app's term everywhere, and py-lmd's too.
-- **object** — QuPath's word, used only when discussing the input file, because QuPath's own
-  interface says annotation/cell/detection objects and its GeoJSON carries `objectType`. So
-  read-time messages say "objects" and everything downstream says "shapes".
+- **object** — QuPath's word. Used in code and docs where the distinction matters, because
+  QuPath's own interface says annotation/cell/detection objects and its GeoJSON carries
+  `objectType` — but **never in a message to the user** (`decisions.md` 063). Every count the app
+  shows says "shapes", including counts of what was dropped while reading.
 - **polygon** — the geometry type only, alongside `MultiPolygon` and `LineString`. Not a synonym
   for shape.
 - **contour** — not used. It was a fourth name, in an image caption and the README.
 - Renamed for consistency: `plot.POLYGON_LIMIT` → `plot.SHAPE_LIMIT` (it counts shapes), and
   `plate.plate_shape` → `plate.plate_dimensions` (a plate is not something the laser cuts).
+- The upload summary reports `n_shapes_in_file` and the named calibration points, rather than a
+  dump of `geom_type` counts — "14,145 shapes and 3 named calibration points", not
+  "14145 Polygons, 3 Points". `geometry_counts` survives in the report for the log.
+- **Unnamed points are reported**, not dropped silently: a point with no name cannot be chosen as
+  a calibration point, and saying nothing left the user staring at "no calibration points" while
+  looking at points they had just drawn.
 - `tests/test_nomenclature.py` enforces this: it fails if "contour" reappears, if the old names
-  come back, if a canonical term is missing from the glossary, or if the glossary stops being
-  linked from `README.md` and `CLAUDE.md`.
+  come back, if a canonical term is missing from the glossary, if the glossary stops being linked,
+  **or if any UI module shows the user the word "object" or a count of geometry types**.
 
 ## Conventions in the code
 

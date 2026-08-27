@@ -78,6 +78,48 @@ DISPLAY_COLUMNS = {
 
 DECIMALS = 2
 
+# Microdissection cannot reliably collect less tissue than this, whatever a budget asks for.
+# Per class, because different biologies genuinely differ in size (`decisions.md` 060).
+DEFAULT_MINIMUM_AREA_UM2 = 100.0
+
+
+def filter_by_minimum_area(
+    gdf: geopandas.GeoDataFrame,
+    minimum_area_um2: dict[str, float],
+    pixel_size_um: float | None,
+) -> tuple[geopandas.GeoDataFrame, pandas.Series]:
+    """Drop shapes below their class's minimum collectable area.
+
+    Applied **before** anything is measured, so every figure the user then sees — statistics,
+    feasibility, what a replicate can hold — describes shapes that can actually be collected.
+    Filtering afterwards would show an amount the user cannot have, which is the class of error
+    this app exists to prevent (`decisions.md` 060).
+
+    Args:
+        gdf: the QC'd shapes.
+        minimum_area_um2: floor per class name. A missing class, or a floor of zero, keeps
+            everything in that class.
+        pixel_size_um: needed to turn pixel areas into µm². Without it nothing is filtered,
+            because a floor in µm² is meaningless.
+
+    Returns:
+        The surviving shapes, and how many were excluded per class.
+    """
+    excluded = pandas.Series(0, index=sorted(set(gdf[CLASS_NAME].dropna())), dtype=int)
+    if not pixel_size_um or not any(minimum_area_um2.values()):
+        return gdf, excluded
+
+    areas = gdf.geometry.area * pixel_size_um**2
+    floors = gdf[CLASS_NAME].map(minimum_area_um2).fillna(0.0)
+    too_small = areas < floors
+
+    if too_small.any():
+        counts = gdf.loc[too_small, CLASS_NAME].value_counts()
+        excluded = excluded.add(counts.reindex(excluded.index).fillna(0).astype(int), fill_value=0).astype(int)
+        logger.info(f"Minimum area excluded {int(too_small.sum())} shapes: {counts.to_dict()}")
+
+    return gdf[~too_small], excluded
+
 
 def for_display(stats: pandas.DataFrame) -> pandas.DataFrame:
     """Rename, order and round the columns for showing to a user.

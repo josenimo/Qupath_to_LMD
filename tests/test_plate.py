@@ -117,3 +117,50 @@ def test_placement_table_puts_each_group_in_its_well():
     assert table.at["C", "3"] == "Tumor", f"Expected Tumor at C3, found {table.at['C', '3']!r}."
     assert table.at["D", "5"] == "Immune"
     assert table.at["A", "1"] == "", "Unused wells should be blank, not carry a stale name."
+
+
+def test_wells_start_from_the_requested_one():
+    """For collecting several slides into one plate: run the first from B2, note where it
+    ended, then start the next after it."""
+    wells = plate.acceptable_wells("384", margins=1)
+    assert wells[0] == "B2", f"Fixture assumption broken: margin 1 should start at B2, got {wells[0]}."
+
+    from_b10 = plate.wells_from(wells, "B10")
+    assert from_b10[0] == "B10", f"Expected filling to start at B10, got {from_b10[0]}."
+    assert len(from_b10) == len(wells) - wells.index("B10")
+    assert set(from_b10) <= set(wells), "Starting later offered a well outside the usable set."
+
+
+def test_a_blank_start_well_changes_nothing():
+    wells = plate.acceptable_wells("384", margins=1)
+    assert plate.wells_from(wells, None) == wells
+    assert plate.wells_from(wells, "") == wells
+
+
+def test_an_unusable_start_well_degrades_to_the_beginning():
+    """A typo should not silently collect nothing, and A1 is excluded by a margin."""
+    wells = plate.acceptable_wells("384", margins=1)
+    for bad in ("A1", "ZZ99", "not a well"):
+        assert plate.wells_from(wells, bad) == wells, (
+            f"Start well {bad!r} is unusable, so filling should begin at the start rather than "
+            "producing an empty or partial plate."
+        )
+
+
+def test_the_start_well_is_case_insensitive():
+    wells = plate.acceptable_wells("384", margins=1)
+    assert plate.wells_from(wells, "b10")[0] == "B10", "A lowercase well name was not recognised."
+
+
+def test_starting_later_leaves_room_for_a_second_slide():
+    """The multi-slide case end to end: two runs into one plate must not collide."""
+    wells = plate.acceptable_wells("384", margins=1)
+    first = plate.assign_wells([f"slide1_r{i}" for i in range(1, 5)], wells)
+    last_used = max(first.values(), key=lambda w: (w[0], int(w[1:])))
+    remaining = plate.wells_from(wells, wells[wells.index(last_used) + 1])
+    second = plate.assign_wells([f"slide2_r{i}" for i in range(1, 5)], remaining)
+
+    overlap = set(first.values()) & set(second.values())
+    assert not overlap, (
+        f"Two slides collected into the same plate reused wells {overlap}, which would mix samples."
+    )

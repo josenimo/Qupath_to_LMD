@@ -31,7 +31,9 @@ class GeojsonReport:
     """What QC found. Everything here is shown to the user; nothing is dropped silently."""
 
     geometry_counts: dict[str, int] = field(default_factory=dict)
+    n_shapes_in_file: int = 0
     calibration_point_names: list[str] = field(default_factory=list)
+    n_unnamed_points: int = 0
     n_unclassified_dropped: int = 0
     n_unnamed_classification_dropped: int = 0
     multiclass_counts: dict[str, int] = field(default_factory=dict)
@@ -47,6 +49,46 @@ class GeojsonReport:
     def n_multipolygons_dropped(self) -> int:
         """How many MultiPolygons were removed because py-lmd cannot cut them."""
         return 0 if self.multipolygons is None else len(self.multipolygons)
+
+
+    def summary(self) -> "pandas.DataFrame":
+        """One compact table describing the file, for showing instead of a stack of warnings.
+
+        Only rows that apply are included, so a clean file produces one line rather than six
+        with zeros in them. Per-class detail belongs later in the workflow, not here
+        (`decisions.md` 064).
+
+        The count that survives QC is deliberately absent: the success message below the table
+        already gives it, and saying it twice on one screen invites the reader to work out
+        which of the two is authoritative.
+        """
+        rows = [("In the file", self.n_shapes_in_file, "")]
+        findings = [
+            (
+                "No QuPath classification",
+                self.n_unclassified_dropped,
+                "ignored — classify them in QuPath to include them",
+            ),
+            (
+                "Classification without a usable name",
+                self.n_unnamed_classification_dropped,
+                "ignored — check how they are classified in QuPath",
+            ),
+            (
+                "More than one class",
+                sum(self.multiclass_counts.values()),
+                "kept, as combined classes joined by --",
+            ),
+            (
+                "Several separate outlines",
+                self.n_multipolygons_dropped,
+                "ignored — the cutter cannot follow these as one path",
+            ),
+        ]
+        rows.extend((label, count, note) for label, count, note in findings if count)
+
+        frame = pandas.DataFrame(rows, columns=["Shapes", "Count", "What happens"])
+        return frame.set_index("Shapes")
 
 
 def read_and_qc(source) -> tuple[geopandas.GeoDataFrame, dict[str, list[float]], GeojsonReport]:
@@ -79,10 +121,19 @@ def read_and_qc(source) -> tuple[geopandas.GeoDataFrame, dict[str, list[float]],
     # A file with none is perfectly readable — the user just has not added them yet, which
     # the UI reports. QuPath omits a property entirely when no object has it, so a file
     # without calibration points has no `name` column at all.
+    is_point = gdf.geometry.geom_type.isin(["Point", "MultiPoint"])
+    report.n_shapes_in_file = int((~is_point).sum())
+
     calibration_points = _calibration_points(gdf)
     report.calibration_point_names = list(calibration_points)
-    logger.info(f"Found {len(calibration_points)} calibration points: {report.calibration_point_names}")
-    gdf = gdf[~gdf.geometry.geom_type.isin(["Point", "MultiPoint"])]
+    # A point with no name cannot be picked as a calibration point, and dropping it silently
+    # leaves the user staring at "no calibration points" while looking at points they just drew.
+    report.n_unnamed_points = max(0, int(is_point.sum()) - _named_point_count(gdf))
+    logger.info(
+        f"Found {len(calibration_points)} calibration points: {report.calibration_point_names}"
+        + (f", and {report.n_unnamed_points} unnamed points" if report.n_unnamed_points else "")
+    )
+    gdf = gdf[~is_point]
 
     # Unclassified QuPath objects cannot be assigned to a well.
     if "classification" not in gdf.columns:
@@ -90,7 +141,7 @@ def read_and_qc(source) -> tuple[geopandas.GeoDataFrame, dict[str, list[float]],
     n_unclassified = int(gdf["classification"].isna().sum())
     if n_unclassified:
         report.n_unclassified_dropped = n_unclassified
-        logger.debug(f"Dropping {n_unclassified} unclassified objects")
+        logger.debug(f"Dropping {n_unclassified} unclassified shapes")
         gdf = gdf[gdf["classification"].notna()]
 
     gdf = gdf.copy()
@@ -106,7 +157,7 @@ def read_and_qc(source) -> tuple[geopandas.GeoDataFrame, dict[str, list[float]],
     unnamed = gdf[CLASS_NAME].isna()
     if unnamed.any():
         report.n_unnamed_classification_dropped = int(unnamed.sum())
-        logger.warning(f"Dropping {int(unnamed.sum())} objects whose classification has no usable name")
+        logger.warning(f"Dropping {int(unnamed.sum())} shapes whose classification has no usable name")
         gdf = gdf[~unnamed]
 
     # py-lmd cuts a single closed path per shape, so a MultiPolygon has no meaning here.
@@ -164,7 +215,7 @@ def implied_pixel_size(gdf: geopandas.GeoDataFrame) -> tuple[float | None, int, 
     implied = numpy.sqrt(area_um2[usable] / area_px2[usable])
     median = float(implied.median())
     spread = float(implied.std() / median) if len(implied) > 1 else 0.0
-    logger.info(f"QuPath areas imply {median:.4f} µm/px over {int(usable.sum())} objects")
+    logger.info(f"QuPath areas imply {median:.4f} µm/px over {int(usable.sum())} shapes")
     return median, int(usable.sum()), spread
 
 
@@ -221,6 +272,14 @@ def _calibration_points(gdf: geopandas.GeoDataFrame) -> dict[str, list[float]]:
                 calibration_points[f"{label} #{i}"] = [part.x, part.y]
 
     return calibration_points
+
+
+def _named_point_count(gdf: geopandas.GeoDataFrame) -> int:
+    """How many Point/MultiPoint features carry a usable name."""
+    if "name" not in gdf.columns:
+        return 0
+    points = gdf[gdf.geometry.geom_type.isin(["Point", "MultiPoint"])]
+    return int(sum(1 for label in points["name"] if label and not pandas.isna(label)))
 
 
 def explode_classes(gdf: geopandas.GeoDataFrame, classes: list[str]) -> geopandas.GeoDataFrame:

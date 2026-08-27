@@ -243,3 +243,109 @@ def test_the_shape_fingerprint_changes_when_classes_are_exploded(fake_streamlit,
     )
     fake_streamlit.state.file_name = "b.geojson"
     assert ui_cells._shape_fingerprint(cells_gdf) != before, "A different file gave the same fingerprint."
+
+
+def test_the_scale_is_estimated_when_the_file_allows_it(fake_streamlit):
+    """The estimate has been right on every file where it could be computed, and the input was
+    the step users stumbled on. So where measurements exist the app uses them and says so."""
+    _load(fake_streamlit, "demo_Qupath_project/Single_cells.geojson")
+    fake_streamlit.state.pixel_size_um = None
+
+    value, source = ui_shared.resolve_pixel_size()
+    assert source == "estimated", (
+        f"This file carries QuPath measurements, so the scale should be estimated; got {source!r}."
+    )
+    assert value == pytest.approx(0.3467, abs=5e-4), f"Estimated scale came out as {value}."
+
+
+def test_a_typed_scale_overrides_the_estimate(fake_streamlit):
+    """The estimate is a default, not a decision the app makes for the user."""
+    _load(fake_streamlit, "demo_Qupath_project/Single_cells.geojson")
+    fake_streamlit.state.pixel_size_um = 0.5
+
+    value, source = ui_shared.resolve_pixel_size()
+    assert (value, source) == (0.5, "entered"), (
+        f"A typed scale must win over the estimate; resolver returned {value} from {source!r}."
+    )
+
+
+def test_no_scale_is_available_for_a_file_without_measurements(fake_streamlit):
+    """Annotation exports carry no areas, so there is nothing to estimate from and the app must
+    fall back to asking rather than guessing."""
+    _load(fake_streamlit, "demo_Qupath_project/TD_01_verysmall_mIF.geojson")
+    fake_streamlit.state.pixel_size_um = None
+
+    value, source = ui_shared.resolve_pixel_size()
+    assert (value, source) == (None, "none"), (
+        f"With no measurements there is nothing to estimate; resolver returned {value} from {source!r}."
+    )
+
+
+def test_a_wide_implied_spread_is_warned_about(fake_streamlit):
+    """A scale that disagrees between objects suggests the export mixes images or was rescaled,
+    which makes every area suspect."""
+    _load(fake_streamlit, "demo_Qupath_project/Single_cells.geojson")
+    report = fake_streamlit.state.geojson_report
+    report.pixel_size_spread = ui_shared.WIDE_SPREAD * 2
+
+    ui_shared._report_pixel_size(0.3467, "estimated", 0.3467, report)
+    assert any("varies by" in w for w in fake_streamlit.warnings), (
+        f"A {report.pixel_size_spread:.0%} spread should be warned about; warnings were "
+        f"{fake_streamlit.warnings}"
+    )
+
+
+def test_a_typed_scale_that_disagrees_with_the_file_is_warned_about(fake_streamlit):
+    """A 2x error in scale is a 4x error in every area, so this is worth interrupting for."""
+    _load(fake_streamlit, "demo_Qupath_project/Single_cells.geojson")
+    report = fake_streamlit.state.geojson_report
+
+    ui_shared._report_pixel_size(3.467, "entered", report.implied_pixel_size_um, report)
+    assert any("×" in w or "x what this file implies" in w for w in fake_streamlit.warnings), (
+        f"A ten-fold disagreement should warn; warnings were {fake_streamlit.warnings}"
+    )
+
+
+def test_the_plate_caption_names_a_well_that_is_actually_free(fake_streamlit, monkeypatch):
+    """It said "start at E7" while E7 was already in use.
+
+    The check compared the usable wells against the assignment's *keys* — the group names —
+    so nothing ever matched and it always named the first usable well. That is worse than no
+    advice: following it would overwrite the slide just collected.
+    """
+    captions = []
+    monkeypatch.setattr(streamlit, "caption", lambda *a, **k: captions.append(str(a[0]) if a else ""))
+    monkeypatch.setattr(streamlit, "download_button", lambda *a, **k: None)
+    monkeypatch.setattr(streamlit, "checkbox", lambda *a, **k: False)
+
+    wells = plate.acceptable_wells("384", margins=1)
+    groups = [f"slide1_r{i}" for i in range(1, 7)]
+    assignment = plate.assign_wells(groups, wells)
+
+    ui_shared.plate_preview(assignment, "384", wells=wells, key_suffix="test")
+
+    caption = " ".join(captions)
+    assert "start at" in caption, f"The caption gives no next well: {caption!r}"
+    suggested = caption.split("start at")[1].strip().strip("*.").split()[0].strip("*")
+    assert suggested not in set(assignment.values()), (
+        f"The caption suggests starting at {suggested}, which is already in use by "
+        f"{[g for g, w in assignment.items() if w == suggested]}. Following it would overwrite "
+        "the slide just collected."
+    )
+    assert suggested in wells, f"{suggested} is not one of the usable wells."
+
+
+def test_a_full_plate_says_so_rather_than_naming_a_well(fake_streamlit, monkeypatch):
+    """With no wells left there is no honest answer to "where next", so it must not invent one."""
+    captions = []
+    monkeypatch.setattr(streamlit, "caption", lambda *a, **k: captions.append(str(a[0]) if a else ""))
+    monkeypatch.setattr(streamlit, "download_button", lambda *a, **k: None)
+    monkeypatch.setattr(streamlit, "checkbox", lambda *a, **k: False)
+
+    wells = ["B2", "B3"]
+    assignment = plate.assign_wells(["a", "b"], wells)
+    ui_shared.plate_preview(assignment, "384", wells=wells, key_suffix="full")
+
+    caption = " ".join(captions)
+    assert "full" in caption, f"A plate with no free wells should say so; caption was {caption!r}"
+    assert "start at" not in caption, "A full plate must not suggest a well to start at."
