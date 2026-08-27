@@ -8,3 +8,6 @@ __pycache__
 # streamlit
 .devcontainer
 /.quarto/
+
+# PR bodies and throwaway scripts, never committed
+.scratch/
