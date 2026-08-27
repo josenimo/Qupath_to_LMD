@@ -15,8 +15,12 @@ class SawParseError(Exception):
     """A samples-and-wells file could not be read as a dictionary."""
 
 
-def plate_shape(plate: str) -> tuple[int, int]:
-    """Rows and columns of a supported plate."""
+def plate_dimensions(plate: str) -> tuple[int, int]:
+    """Rows and columns of a supported plate.
+
+    Named `dimensions` rather than `shape`, because in this app a shape is something the
+    laser cuts (see GLOSSARY.md).
+    """
     if plate not in PLATE_SHAPES:
         raise ValueError(f"Plate must be one of {sorted(PLATE_SHAPES)}, got {plate!r}")
     return PLATE_SHAPES[plate]
@@ -28,7 +32,7 @@ def acceptable_wells(plate: str = "384", margins: int = 0, step_row: int = 1, st
     The margin exists because the LMD7 collects unreliably into the outermost wells of a
     384 plate; the steps leave blanks between samples for easier pipetting.
     """
-    max_row, max_col = plate_shape(plate)
+    max_row, max_col = plate_dimensions(plate)
     if not isinstance(margins, int):
         raise ValueError("margins must be an integer")
 
@@ -48,7 +52,7 @@ def acceptable_wells(plate: str = "384", margins: int = 0, step_row: int = 1, st
 
 def default_layout(plate: str = "384") -> pandas.DataFrame:
     """The bare plate, every cell holding its own well name."""
-    rows, cols = plate_shape(plate)
+    rows, cols = plate_dimensions(plate)
     row_labels = list(string.ascii_uppercase[:rows])
     col_labels = list(range(1, cols + 1))
     return pandas.DataFrame(
@@ -89,7 +93,7 @@ def sample_layout(
     Returns the layout and the classes that did not fit, so the caller can say so rather
     than let them disappear.
     """
-    rows, cols = plate_shape(plate)
+    rows, cols = plate_dimensions(plate)
     wells = list(wells if wells is not None else acceptable_wells(plate))
 
     # Sorted, so the same file laid out twice gives the same plate.
@@ -138,7 +142,7 @@ def layout_to_saw(layout: pandas.DataFrame) -> dict[str, str]:
 def placement_dataframe(samples_and_wells: dict[str, str], plate: str = "384") -> pandas.DataFrame:
     """The plate as a table of class names, for the CSV in the download bundle."""
     logger.info(f"Building placement table for a {plate} well plate")
-    rows, cols = plate_shape(plate)
+    rows, cols = plate_dimensions(plate)
 
     table = pandas.DataFrame(
         "",

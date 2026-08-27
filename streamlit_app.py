@@ -55,7 +55,7 @@ logger.add(sys.stdout, colorize=True, format="<green>{time:HH:mm:ss.SS}</green> 
 ### Introduction ###
 ####################
 st.markdown("""
-            # Convert a GeoJSON polygons for Laser Microdissection
+            # Turn QuPath shapes into a Laser Microdissection cutting file
             ## Part of the [openDVP](https://github.com/CosciaLab/openDVP) framework
             ### For help, post issue on [Github](https://github.com/CosciaLab/Qupath_to_LMD) with .geojson file and session id
             """)

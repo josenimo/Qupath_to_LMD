@@ -38,7 +38,7 @@ def test_both_supported_plates_have_the_right_well_count(plate_type, expected):
 def test_an_unsupported_plate_is_rejected():
     """Silently defaulting to 384 would put tissue in wells that do not exist on the real plate."""
     with pytest.raises(ValueError, match="Plate must be one of"):
-        plate.plate_shape("1536")
+        plate.plate_dimensions("1536")
 
 
 def test_assignment_is_deterministic_so_a_rerun_is_stable():

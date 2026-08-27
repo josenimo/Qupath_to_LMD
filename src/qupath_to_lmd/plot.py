@@ -21,9 +21,9 @@ PALETTE = ["#E69F00", "#56B4E9", "#009E73", "#0072B2", "#D55E00", "#CC79A7", "#F
 MUTED = "#dcdcdc"
 MUTED_EDGE = "#b4b4b4"
 
-# Above this many shapes, draw one dot per shape instead of its outline. Polygon rendering
-# is ~2s at 50k shapes and ~8s at 200k; centroids are 0.14s at 200k.
-POLYGON_LIMIT = 20_000
+# Above this many shapes, draw one dot per shape instead of its outline. Drawing outlines is
+# ~2s at 50k shapes and ~8s at 200k; centroids are 0.14s at 200k.
+SHAPE_LIMIT = 20_000
 
 
 def class_colors(classes: list[str]) -> dict[str, str]:
@@ -64,7 +64,7 @@ def plot_shapes(
     classes = sorted(labels.dropna().unique())
     included = classes if included is None else included
     colors = class_colors(classes)
-    as_dots = len(gdf) > POLYGON_LIMIT
+    as_dots = len(gdf) > SHAPE_LIMIT
     logger.info(f"Plotting {len(gdf)} shapes as {'centroids' if as_dots else 'polygons'}")
 
     unlabelled = gdf[labels.isna()]

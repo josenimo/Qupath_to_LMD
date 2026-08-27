@@ -6,6 +6,9 @@ suggestions. If a rule blocks me, I say so and stop rather than route around it.
 Companion documents:
 - `facts.md` — what is true about this app (living document, I keep it current)
 - `decisions.md` — why things are the way they are (append-only log)
+- `GLOSSARY.md` — one word per thing. **shape** is what the laser cuts, **object** is QuPath's
+  word for what is in the input file, **polygon** is a geometry type. I use these consistently
+  in code, in messages and in docs, and I add a term here rather than inventing a synonym.
 
 ---
 

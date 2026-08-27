@@ -111,9 +111,9 @@ def overview_step(selected: list[str]) -> None:
             title=f"{len(gdf)} shapes — coloured classes are the ones you kept",
         )
     st.pyplot(figure, width="content")
-    if len(gdf) > plot.POLYGON_LIMIT:
+    if len(gdf) > plot.SHAPE_LIMIT:
         st.caption(
-            f"Over {plot.POLYGON_LIMIT:,} shapes, so each one is drawn as a dot rather than "
+            f"Over {plot.SHAPE_LIMIT:,} shapes, so each one is drawn as a dot rather than "
             "its outline. The outlines are still what gets cut."
         )
     st.caption(
