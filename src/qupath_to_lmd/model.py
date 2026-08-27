@@ -24,6 +24,19 @@ WELL = "well"
 
 CANONICAL_COLUMNS = (SHAPE_ID, CLASS_NAME, REPLICATE, GROUP_KEY, WELL, "geometry")
 
+# What a plan needs to carry: the canonical columns plus the fields QuPath needs back for the
+# re-importable GeoJSON. Copying only these keeps a plan affordable on large files — the plan
+# builders copy the frame, and at a million shapes a full copy costs 99 MB
+# (`decisions.md` 051).
+PLAN_SOURCE_COLUMNS = ("id", "objectType", "classification", CLASS_NAME, "geometry")
+
+
+def _plan_frame(gdf: geopandas.GeoDataFrame) -> geopandas.GeoDataFrame:
+    """A copy holding only the columns a plan and its exports need."""
+    keep = [column for column in PLAN_SOURCE_COLUMNS if column in gdf.columns]
+    extra = [c for c in gdf.columns if c not in keep and c == "original_classification_name"]
+    return gdf[keep + extra].copy()
+
 
 @dataclass
 class CollectionPlan:
@@ -111,7 +124,7 @@ def plan_from_class_wells(
     Exploded classes need no special handling here — explosion already rewrote
     `classification_name` per shape, so each exploded shape becomes its own group.
     """
-    shapes = gdf.copy()
+    shapes = _plan_frame(gdf)
     shapes[SHAPE_ID] = shapes["id"] if "id" in shapes.columns else shapes.index.astype(str)
     shapes[REPLICATE] = None
     # Only classes the user put in the scheme get a group. A class they left out was not asked
@@ -164,7 +177,7 @@ def plan_from_selection(
     Returns:
         The plan, and the group-to-well mapping the export path also needs.
     """
-    shapes = gdf.copy()
+    shapes = _plan_frame(gdf)
     shapes[SHAPE_ID] = shapes["id"] if "id" in shapes.columns else shapes.index.astype(str)
     shapes[REPLICATE] = replicate_of.reindex(shapes.index)
 

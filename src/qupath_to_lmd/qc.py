@@ -4,7 +4,6 @@ from dataclasses import dataclass, field
 
 import geopandas
 import numpy
-import pandas
 import shapely
 from loguru import logger
 
@@ -146,37 +145,32 @@ class PixelSizeReport:
         return self.ratio is not None and abs(self.ratio - 1) > 0.05
 
 
-def pixel_size_qc(gdf: geopandas.GeoDataFrame, entered_um_per_px: float) -> PixelSizeReport:
-    """Compare an entered µm/px against the scale implied by QuPath's area measurements.
+def compare_pixel_size(
+    entered_um_per_px: float,
+    implied_um_per_px: float | None,
+    n_objects: int = 0,
+    relative_spread: float | None = None,
+) -> PixelSizeReport:
+    """Compare an entered µm/px against the scale QuPath's measurements implied.
 
-    QuPath writes object areas in µm² while GeoJSON coordinates stay in image pixels, so
-    `sqrt(area_µm² / area_px²)` recovers the scale. Reports only — the entered value is
-    never overwritten (`decisions.md` 011).
+    The implied value is computed once when the file is read (`geojson.implied_pixel_size`),
+    so this is pure arithmetic and costs nothing on a rerun. Reports only — the entered value
+    is never overwritten (`decisions.md` 011).
     """
-    from qupath_to_lmd.geojson import area_measurement_column, measurements_frame
+    report = PixelSizeReport(
+        entered_um_per_px=entered_um_per_px,
+        implied_um_per_px=implied_um_per_px,
+        n_objects_checked=n_objects,
+        relative_spread=relative_spread,
+    )
 
-    report = PixelSizeReport(entered_um_per_px=entered_um_per_px)
-
-    measurements = measurements_frame(gdf)
-    column = area_measurement_column(measurements)
-    if column is None:
+    if implied_um_per_px is None:
         logger.info("No area measurements in this file, cannot cross-check pixel size")
         return report
 
-    area_um2 = pandas.to_numeric(measurements[column], errors="coerce")
-    area_px2 = gdf.geometry.area
-    usable = area_um2.notna() & (area_um2 > 0) & (area_px2 > 0)
-    if not usable.any():
-        return report
-
-    implied = numpy.sqrt(area_um2[usable] / area_px2[usable])
-    report.n_objects_checked = int(usable.sum())
-    report.implied_um_per_px = float(implied.median())
-    report.relative_spread = float(implied.std() / implied.median()) if len(implied) > 1 else 0.0
-
     logger.info(
-        f"Pixel size: entered {entered_um_per_px} µm/px, "
-        f"{column} implies {report.implied_um_per_px:.4f} over {report.n_objects_checked} objects"
+        f"Pixel size: entered {entered_um_per_px} µm/px, QuPath's areas imply "
+        f"{implied_um_per_px:.4f} over {n_objects} objects"
     )
     if report.is_concerning:
         logger.warning(f"Entered pixel size is {report.ratio:.2f}x the implied value")

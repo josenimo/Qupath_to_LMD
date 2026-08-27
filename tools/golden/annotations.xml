@@ -9,6 +9,20 @@
   <Y_CalibrationPoint_3>-61940</Y_CalibrationPoint_3>
   <ShapeCount>6</ShapeCount>
   <Shape_1>
+    <PointCount>5</PointCount>
+    <CapID>B2</CapID>
+    <X_1>16000</X_1>
+    <Y_1>-14000</Y_1>
+    <X_2>16000</X_2>
+    <Y_2>-26300</Y_2>
+    <X_3>24400</X_3>
+    <Y_3>-26300</Y_3>
+    <X_4>24400</X_4>
+    <Y_4>-14000</Y_4>
+    <X_5>16000</X_5>
+    <Y_5>-14000</Y_5>
+  </Shape_1>
+  <Shape_2>
     <PointCount>31</PointCount>
     <CapID>B2</CapID>
     <X_1>24600</X_1>
@@ -73,20 +87,6 @@
     <Y_30>-35800</Y_30>
     <X_31>24600</X_31>
     <Y_31>-38100</Y_31>
-  </Shape_1>
-  <Shape_2>
-    <PointCount>5</PointCount>
-    <CapID>B2</CapID>
-    <X_1>16000</X_1>
-    <Y_1>-14000</Y_1>
-    <X_2>16000</X_2>
-    <Y_2>-26300</Y_2>
-    <X_3>24400</X_3>
-    <Y_3>-26300</Y_3>
-    <X_4>24400</X_4>
-    <Y_4>-14000</Y_4>
-    <X_5>16000</X_5>
-    <Y_5>-14000</Y_5>
   </Shape_2>
   <Shape_3>
     <PointCount>43</PointCount>

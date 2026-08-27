@@ -1,10 +1,10 @@
 # facts.md
 
 Living record of what is true about this app. Corrected in place when it goes stale — not
-append-only (that is `decisions.md`). Last verified: 2026-08-26.
+append-only (that is `decisions.md`). Last verified: 2026-08-27.
 
-Restructuring into two workflows is underway: `ROADMAP.md`. Phases 0 and 1 are done, so
-the app now has a workflow router; the cell workflow itself is still scaffolding.
+Restructuring into two workflows is done: `ROADMAP.md` Phases 0-6 are complete. Both
+workflows reach a downloadable collection.
 
 ---
 
@@ -42,9 +42,9 @@ src/qupath_to_lmd/
   model.py                        CollectionPlan, canonical column names, provenance
   geojson.py                      read_and_qc, explode_classes, extract_coordinates,
                                   rewrite_classification, sanitize_for_qupath,
-                                  measurements_frame, area_measurement_column
+                                  implied_pixel_size, drop_unused_columns
   plate.py                        plate shapes, acceptable_wells, layouts, saw parse/convert
-  qc.py                           triangle_qc, validate_saw, pixel_size_qc (report objects)
+  qc.py                           triangle_qc, validate_saw, compare_pixel_size (reports)
   stats.py                        class_statistics, for_display, reference_pixel_sizes
   budget.py                       BudgetMode, ClassBudget, feasibility, total_groups
   selection.py                    SelectionMode, SelectionParams, select, grid_bins
@@ -55,13 +55,13 @@ src/qupath_to_lmd/
   === UI layer: Streamlit, owns session_state ===
   ui_shared.py                    steps both workflows use
   ui_legacy.py                    annotations workflow (frozen as of Phase 1)
-  ui_cells.py                     cell-segmentation workflow (scaffolding only so far)
+  ui_cells.py                     cell-segmentation workflow (step 8 is an st.fragment)
   === other ===
   mock_streamlit.py               patch_streamlit() — stubs st.* for notebook use
   __init__.py                     empty
 tools/
   golden_harness.py               byte-equality regression gate
-  golden/                         8 reference artefacts
+  golden/                         10 reference artefacts, 5 cases
 demo_Qupath_project/              real QuPath project used as test fixture
   TD_01_verysmall_mIF.geojson     9 features: 6 annotation Polygons + 3 calibration Points
   Single_cells.geojson            131 features: 121 cells + 7 annotations + 3 Points
@@ -115,7 +115,8 @@ Verified against both demo files.
 - `Collection` does **no** cut-path optimization. `lmd.lib` does export
   `tsp_greedy_solve(node_list, k=100, return_sorted=False)` (returns indices) and
   `tsp_hilbert_solve(data, p=3)`, but only the mask-based `SegmentationLoader` calls them.
-  To order shapes we must call the solvers ourselves before `new_shape`.
+  To order shapes we must call the solver ourselves before `new_shape`. Only the Hilbert
+  solver is used; greedy needs `umap-learn` and is not offered (`decisions.md` 053).
 - `SegmentationLoader`'s config is the field's vocabulary for shape processing —
   `shape_dilation`, `shape_erosion`, `binary_smoothing`, `convolution_smoothing`,
   `poly_compression_factor`, `path_optimization`, `hilbert_p`. It operates on label masks,
@@ -207,6 +208,9 @@ categoricals × replicate count, cycling 6 hard-coded colours as Java signed int
   varies 1.9× — because pixel size is a property of the whole optical path, not of the
   objective. The accompanying warning says so explicitly and points at QuPath's
   *Image → Image properties → Pixel width* as the real source.
+- `geojson.area_measurements` pulls out only QuPath's area field. Building the whole
+  `measurements_frame` to read one of ~100 columns cost 0.28 s and a 170 MB transient on every
+  rerun; the narrow version is 0.16 s with no measurable allocation (`decisions.md` 050).
 - `qc.pixel_size_qc` cross-checks the user's µm/px against `sqrt(Cell: Area / polygon area)`
   and warns above 5% disagreement. On `Single_cells.geojson` the implied value is
   0.3467 µm/px with 0.23% spread, so entering 3.467 is flagged as 10.00×. Files without area
@@ -324,18 +328,17 @@ Both workflows expose the same two, in the shared export step.
 - **Smoothing tolerance**, in pixels, default 1.0 — unchanged from what the app has always
   used (`decisions.md` 019). Measured on 900 real shapes: tolerance 0 gives 12 432 vertices,
   1.0 gives 7 938, 5.0 gives 4 586.
-- **Cutting order** (`export.PathOrder`), default **`GREEDY`** — the option that minimises
+- **Cutting order** (`export.PathOrder`), default **`HILBERT`** — the option that minimises
   stage movement, not the one that preserves historical output (`decisions.md` 047), because
   stage movement between shapes is a leading cause of cutting misalignment.
-  - `GREEDY` — grouped by well, path within each well shortened with py-lmd's
-    `tsp_greedy_solve` (nearest-neighbour over a k-NN graph). **Default.**
-  - `HILBERT` — grouped, shortened with `tsp_hilbert_solve` at order 7.
+  - `HILBERT` — grouped by well, path within each well shortened with py-lmd's
+    `tsp_hilbert_solve` at order 7. **Default.**
   - `GROUPED` — all of a well's shapes together, wells visited in plate order, no shortening.
   - `NONE` — the order shapes were loaded in; what the app did before Phase 5.
 - Measured on 900 shapes across 9 wells: load order needs **759 collector movements** and
   346 038 px of stage travel. Grouping gives 8 movements but *lengthens* travel to 392 877 px
-  because it ignores position within a well. Hilbert gives 213 295 px (62%); greedy gives
-  **197 563 px (57%)** and is faster, which is why it is the default.
+  because it ignores position within a well. **Hilbert gives 213 295 px (62%)** with 8
+  movements, and is the default.
 - **What will not be cut is reported by cause, not by count** (`decisions.md` 048).
   `CollectionPlan.not_selected` is shapes with no group — deliberate in the cell workflow, a
   likely mistake in the annotations workflow, so the cell workflow states it in a caption and
@@ -351,18 +354,18 @@ Both workflows expose the same two, in the shared export step.
   exception at 30 755→31 066 px: with 124 wells for 128 shapes almost every shape has its own
   well, so travel is dominated by well order and there is nothing within a well to shorten.
   Its collector movements still drop 126→123.
-- **`tsp_greedy_solve` needs `umap-learn`**, which it imports lazily at
-  `lmd/segmentation.py:120` and which is *not* a py-lmd dependency — calling it without it
-  raises `ModuleNotFoundError`. It is now a declared dependency; it adds umap-learn,
-  pynndescent, scikit-learn, joblib and threadpoolctl (numba was already required). `k` is
-  clamped to `len(points) - 1` so small wells do not trip pynndescent's `n_neighbors` warning.
-- **Greedy has a numba cold start**: the first call in a process took 14.7 s while numba
-  compiled, then 0.1–0.6 s. It only runs on a button press, and the help text warns about it.
+- **py-lmd's `tsp_greedy_solve` is deliberately not offered** (`decisions.md` 053). It gave
+  ~8% shorter travel than hilbert (197 563 px vs 213 295 px) but needs `umap-learn`, which it
+  imports lazily at `lmd/segmentation.py:120`. That cost ~354 MB of numba JIT on first use
+  against hilbert's 33 MB, ~15 s of cold start, and five extra packages reinstalled on every
+  Community Cloud reboot. Removed entirely rather than hidden, so there is no code path whose
+  dependency is absent — the Phase 5 harness asserts `PathOrder` has no `GREEDY` and that
+  `umap` will not import.
 - Hilbert cost by shape count at order 7: 0.06 s at 100, 0.33 s at 900, 0.93 s at 2 700,
   2.70 s at 8 000. Lower orders are faster but markedly worse above ~1 000 shapes.
-- Both solvers print progress to stdout and greedy can warn; both are silenced in
-  `_solve_within_well`, and a solver returning anything other than a permutation is logged and
-  ignored rather than allowed to drop or duplicate shapes.
+- The solver prints progress to stdout, which is silenced in `_solve_within_well`, and a
+  solver returning anything other than a permutation is logged and ignored rather than allowed
+  to drop or duplicate shapes.
 
 ## Session state keys
 
@@ -482,6 +485,63 @@ Fixed in Phase 0 (`decisions.md` 021), kept here briefly so the history is legib
 - The MultiPolygon warning selected an `annotation_name` column that QuPath never writes,
   so that branch would have raised `KeyError` for any user who actually had a MultiPolygon.
   Verified against a synthetic file, then fixed.
+
+## Scale, measured (Phase 6)
+
+Profiled on Jose's real 83.7 MB / 14 145-feature export and on synthetic QuPath-shaped files.
+The roadmap said to measure before designing; the measurements changed what needed doing.
+
+| shapes | per widget change | on click | peak RSS |
+| --- | --- | --- | --- |
+| 8 537 (real export) | 0.49 s | 9.3 s | 690 MB |
+| 50 000 | 0.64 s | 9.7 s | 710 MB |
+| 150 000 | 1.94 s | 15.1 s | 940 MB |
+| 1 000 000 (491 MB file) | 16.7 s | 53 s | **2 207 MB** |
+
+Per-rerun figures are the *uncached* library cost; the app caches them, so a user pays them once
+per change of input rather than once per widget touch.
+
+**A million cells does not belong on the hosted app.** Community Cloud documents 690 MB guaranteed
+and **2.7 GB maximum** per app, so 2 207 MB leaves little headroom, and before the Phase 6
+optimisations it was 2 689 MB — over the line in practice. Reading the file alone costs ~1.4 GB.
+Rough model: **~650 MB base + ~2 KB per shape**.
+
+`ui_shared` warns above `HOSTED_COMFORTABLE_SHAPES` (40 000 — about the most a single TMA core
+yields) with these figures and instructions for running locally (`decisions.md` 051).
+
+- **Community Cloud specifics**, documented Feb 2024 and subject to change: CPU 0.078–2 cores,
+  memory 690 MB minimum to 2.7 GB maximum, storage up to 50 GB. Apps **sleep after 12 hours**
+  without traffic and anyone with view access can wake them. **Every dependency in
+  `requirements.txt` is reinstalled on each reboot** — there is no documented wheel cache — so
+  each package added lengthens every cold start.
+- **The data is cheap; the imports are not.** Memory attribution: bare Python 14 MB, +geopandas
+  and pandas 100 MB, +`lmd.lib` and matplotlib 243 MB, +the whole 83.7 MB GeoJSON ~320 MB. The
+  frame itself is only 39 MB. So most of the footprint is libraries, which is why removing
+  `umap-learn` (`decisions.md` 053) mattered more than anything done to the data: the real
+  export now peaks at **392 MB**, down from 767 MB before Phase 6.
+- **What runs on every rerun** was the thing to fix, since Streamlit re-executes the whole script
+  on every widget change: `selection.select` (1.40 s at 150 000 shapes) and `pixel_size_qc`
+  (0.28 s on the real file). Both are now cached in the UI layer, along with `class_statistics`,
+  which was being computed twice per rerun.
+- `plot_shapes` scales fine — 0.11 s at 150 000 — because it switches to centroids above
+  `POLYGON_LIMIT`. That earlier decision paid off.
+- Cache keys are explicit tuples, never the frame: hashing 150 000 rows would cost what the cache
+  saves. `_shape_fingerprint` is `(file name, row count, sorted class names)` — the class names
+  matter because exploding a class rewrites them in place, so a filename alone would serve a
+  stale selection.
+- **Columns nothing reads are dropped at load** (`geojson.UNUSED_COLUMNS`): `measurements`,
+  `name`, `isLocked`. `measurements` is consumed once during the read to derive the implied pixel
+  size, which then lives in the report — so `qc.compare_pixel_size` is pure arithmetic and costs
+  nothing per rerun, down from 0.28 s and a 170 MB transient. At a million shapes the drop frees
+  107 MB of a 383 MB frame.
+- **The plan builders copy only the columns a plan needs** (`model.PLAN_SOURCE_COLUMNS`), not the
+  whole frame. A full copy cost 99 MB at a million shapes.
+- **Step 8 is an `st.fragment`**, so changing the selection mode, seed or neighbour distance
+  re-runs only steps 8–9 rather than the whole script. The export lives inside the fragment, so
+  nothing downstream can be left showing a stale selection. Note Streamlit forbids combining
+  `@st.fragment` and caching on the *same* function — the caches here wrap different functions.
+- Together these took the million-shape peak from 2 689 MB to **2 207 MB**, and
+  `build_collection` from 7.6 s to 1.1 s (the latter mostly by defaulting to hilbert).
 
 ## Regression harness
 

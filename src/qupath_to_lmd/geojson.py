@@ -9,6 +9,7 @@ import json
 from dataclasses import dataclass, field
 
 import geopandas
+import numpy
 import pandas
 from loguru import logger
 
@@ -36,6 +37,11 @@ class GeojsonReport:
     multiclass_counts: dict[str, int] = field(default_factory=dict)
     multipolygons: pandas.DataFrame | None = None
     n_shapes_kept: int = 0
+    # Derived from QuPath's own area measurements while the file is open, so the measurement
+    # strings can then be dropped — they are 22% of the frame at a million shapes.
+    implied_pixel_size_um: float | None = None
+    n_area_measurements: int = 0
+    pixel_size_spread: float | None = None
 
     @property
     def n_multipolygons_dropped(self) -> int:
@@ -111,9 +117,55 @@ def read_and_qc(source) -> tuple[geopandas.GeoDataFrame, dict[str, list[float]],
         logger.debug(f"Dropping {int(is_multi.sum())} MultiPolygons")
         gdf = gdf[~is_multi]
 
+    # Read the scale QuPath's measurements imply before dropping them.
+    implied, n_measured, spread = implied_pixel_size(gdf)
+    report.implied_pixel_size_um = implied
+    report.n_area_measurements = n_measured
+    report.pixel_size_spread = spread
+
+    gdf = drop_unused_columns(gdf)
+
     report.n_shapes_kept = len(gdf)
     logger.success(f"GeoJSON QC complete, {report.n_shapes_kept} shapes kept")
     return gdf, calibration_points, report
+
+
+# Columns nothing downstream reads. `measurements` is consumed once, above, to derive the
+# implied pixel size; `name` only ever labelled the calibration points, which have already
+# left the frame. At a million shapes they are 107 MB of a 383 MB frame (`decisions.md` 051).
+UNUSED_COLUMNS = ("measurements", "name", "isLocked")
+
+
+def drop_unused_columns(gdf: geopandas.GeoDataFrame) -> geopandas.GeoDataFrame:
+    """Drop columns nothing downstream reads, to keep large files affordable."""
+    present = [column for column in UNUSED_COLUMNS if column in gdf.columns]
+    if not present:
+        return gdf
+    freed = gdf[present].memory_usage(deep=True).sum() / 1e6
+    logger.info(f"Dropping unused columns {present}, freeing {freed:.0f} MB")
+    return gdf.drop(columns=present)
+
+
+def implied_pixel_size(gdf: geopandas.GeoDataFrame) -> tuple[float | None, int, float | None]:
+    """The µm/px that QuPath's own area measurements imply, if it carries any.
+
+    QuPath writes object areas in µm² while GeoJSON coordinates stay in image pixels, so
+    `sqrt(area_µm² / area_px²)` recovers the scale. Computed once while the file is open.
+
+    Returns:
+        The median implied scale, how many objects it came from, and its relative spread.
+    """
+    area_um2 = area_measurements(gdf)
+    area_px2 = gdf.geometry.area
+    usable = area_um2.notna() & (area_um2 > 0) & (area_px2 > 0)
+    if not usable.any():
+        return None, 0, None
+
+    implied = numpy.sqrt(area_um2[usable] / area_px2[usable])
+    median = float(implied.median())
+    spread = float(implied.std() / median) if len(implied) > 1 else 0.0
+    logger.info(f"QuPath areas imply {median:.4f} µm/px over {int(usable.sum())} objects")
+    return median, int(usable.sum()), spread
 
 
 def _classification_name(value) -> str | None:
@@ -261,6 +313,42 @@ def measurements_frame(gdf: geopandas.GeoDataFrame) -> pandas.DataFrame:
     frame = pandas.DataFrame.from_dict(parsed, orient="index")
     logger.info(f"Parsed measurements for {len(frame)} of {len(gdf)} objects, {frame.shape[1]} fields")
     return frame.reindex(gdf.index)
+
+
+def area_measurements(gdf: geopandas.GeoDataFrame) -> pandas.Series:
+    """QuPath's per-object area in µm², without parsing the other measurement fields.
+
+    A real export carries around 100 fields per cell, so building the whole frame to read one
+    column costs a quarter of a second and a large transient allocation on every rerun
+    (`decisions.md` 050). This pulls out just the area.
+    """
+    if "measurements" not in gdf.columns:
+        return pandas.Series(dtype="float64", index=gdf.index)
+
+    values = {}
+    for index, raw in gdf["measurements"].items():
+        parsed = None
+        if isinstance(raw, str) and raw.strip():
+            try:
+                parsed = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+        elif isinstance(raw, dict):
+            parsed = raw
+        if not parsed:
+            continue
+        key = _area_key(parsed)
+        if key:
+            values[index] = parsed[key]
+
+    return pandas.Series(values, dtype="float64").reindex(gdf.index)
+
+
+def _area_key(measurement: dict) -> str | None:
+    """`Cell: Area` if present, else any other field naming an area."""
+    if "Cell: Area" in measurement:
+        return "Cell: Area"
+    return next((k for k in measurement if str(k).strip().endswith("Area")), None)
 
 
 def area_measurement_column(measurements: pandas.DataFrame) -> str | None:

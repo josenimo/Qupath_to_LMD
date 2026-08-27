@@ -13,7 +13,7 @@ from pathlib import Path
 
 import geopandas
 import numpy
-from lmd.lib import Collection, tsp_greedy_solve, tsp_hilbert_solve
+from lmd.lib import Collection, tsp_hilbert_solve
 from loguru import logger
 
 from qupath_to_lmd.geojson import extract_coordinates, sanitize_for_qupath
@@ -30,26 +30,20 @@ DEFAULT_SIMPLIFY_TOLERANCE = 1.0
 # 1x1 mm area and 7 for a whole slide; 7 gave the shortest paths at every size measured.
 HILBERT_ORDER = 7
 
-# Neighbours the greedy solver considers per node. py-lmd defaults to 100; clamped to the
-# number of nodes available so small wells do not trip pynndescent's n_neighbors warning.
-GREEDY_NEIGHBOURS = 100
-
-
 class PathOrder(str, Enum):
     """The order shapes are written to the XML, which is the order the LMD cuts them.
 
     Stage movement between shapes is a leading cause of cutting misalignment, so the default
     is the option that minimises it rather than the one that preserves historical output
-    (`decisions.md` 047).
+    (`decisions.md` 047, 052, 053).
     """
 
-    GREEDY = "greedy"
     HILBERT = "hilbert"
     GROUPED = "grouped"
     NONE = "none"
 
 
-DEFAULT_PATH_ORDER = PathOrder.GREEDY
+DEFAULT_PATH_ORDER = PathOrder.HILBERT
 
 
 def order_for_cutting(
@@ -82,18 +76,18 @@ def order_for_cutting(
 
 
 def _solve_within_well(points: numpy.ndarray, mode: PathOrder, hilbert_p: int) -> numpy.ndarray:
-    """Shortest-ish visiting order for one well's shapes, using py-lmd's own solvers.
+    """Shortest-ish visiting order for one well's shapes, using py-lmd's Hilbert solver.
 
-    Both solvers print progress to stdout and greedy can emit a nearest-neighbour warning, so
-    both are quietened here — the useful numbers are logged by the caller instead.
+    py-lmd also ships a greedy nearest-neighbour solver. It is not offered: it needs
+    `umap-learn`, which costs ~354 MB of JIT on first use and is reinstalled on every cold
+    boot, in exchange for about 8% shorter travel (`decisions.md` 053).
+
+    The solver prints progress to stdout, which is quietened here — the useful numbers are
+    logged by the caller instead.
     """
     with contextlib.redirect_stdout(io.StringIO()), warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        if mode is PathOrder.GREEDY:
-            neighbours = max(2, min(GREEDY_NEIGHBOURS, len(points) - 1))
-            solved = tsp_greedy_solve(points, k=neighbours)
-        else:
-            solved = tsp_hilbert_solve(points, p=hilbert_p)
+        solved = tsp_hilbert_solve(points, p=hilbert_p)
 
     order = numpy.asarray(solved).ravel()
     if sorted(order.tolist()) != list(range(len(points))):
@@ -149,7 +143,8 @@ def build_collection(
             by up to this much; larger values mean fewer vertices and faster cutting.
         plate: plate type, for the placement CSV.
         path_order: the order shapes are written in, which is the order the LMD cuts them.
-            Defaults to `GREEDY`, which minimises stage movement.
+            Defaults to `HILBERT`, which minimises stage movement without greedy's
+            memory cost.
     """
     selected = plan.selected
     if selected.empty:

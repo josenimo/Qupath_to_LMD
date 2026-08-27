@@ -821,3 +821,95 @@ same settings re-derive the same assignment, and a changed setting propagates in
 wells, both now asserted — so the answer is that the plate table *is* the confirmation. If it
 still reads as ambiguous, the fix is a clearer statement next to the table rather than a
 Confirm button, which would only add a step that can be forgotten.
+
+## 050 — Phase 6: cache the rerun path, narrow the measurement parsing
+**Date:** 2026-08-27 · **Status:** active
+**Decision:** `ROADMAP.md` Phase 6, which said to profile before designing. Three changes came
+out of the measurements, and one deliberate non-change.
+1. `geojson.area_measurements` reads only QuPath's area field instead of building a frame of all
+   ~100 measurements to get one column: 0.28 s and a 170 MB transient down to 0.16 s and no
+   measurable allocation, with identical results (0.6535 µm/px over 8537 objects, 0.66% spread).
+2. `selection.select`, `class_statistics` and `pixel_size_qc` are cached in the UI layer. Streamlit
+   re-executes the whole script on every widget change, and selecting from 150 000 shapes costs
+   1.40 s — without caching, nudging any unrelated control re-ran the entire selection.
+   `class_statistics` was additionally being computed twice per rerun.
+3. Cache keys are explicit tuples, never the GeoDataFrame: Streamlit would hash 150 000 rows on
+   every rerun, costing what the cache saves. The shape fingerprint is
+   `(file name, row count, sorted class names)`; the class names are load-bearing because
+   exploding a class rewrites them in place, so a filename alone would serve a stale selection.
+**The non-change:** nothing breaks at 150 000 shapes — 1.94 s uncached per rerun, 15 s per export,
+936 MB. No downsampling, streaming or chunking was added, because the profile does not justify it
+and speculative machinery would be harder to reason about than the problem it solves.
+**What the profile revealed that was not expected:** the footprint is libraries, not data. The
+83.7 MB GeoJSON adds 77 MB; the frame is 39 MB. The largest single item is the numba/umap JIT
+behind the greedy solver — about **354 MB, paid once per process on the first export**, against
+33 MB for hilbert. That is a consequence of 047 worth Jose knowing about, since it lands on a
+free-tier deployment; it is recorded rather than acted on, because the default is his call.
+**Verified:** 6 checks that the caches hit on repeated reruns and invalidate on a changed seed,
+changed replicates, an exploded class and a different file. All other suites and the golden
+harness unaffected.
+
+## 051 — Scale guardrail, and the optimisations the research justified
+**Date:** 2026-08-27 · **Status:** active
+**Decision:** After researching Community Cloud's limits and profiling a genuine 1 000 000-cell
+export, four changes and one refusal.
+1. **Columns nothing reads are dropped at load** — `measurements`, `name`, `isLocked`. The
+   implied pixel size is derived from `measurements` once during the read and kept in the
+   report, so `qc.compare_pixel_size` became pure arithmetic: 0.28 s and a 170 MB transient per
+   rerun down to nothing. At a million shapes the drop frees 107 MB of a 383 MB frame.
+2. **The plan builders copy only the columns a plan needs**, not the whole frame — a full copy
+   cost 99 MB at a million shapes.
+3. **Step 8 is an `st.fragment`**, so changing the selection mode, seed or neighbour distance
+   re-runs only steps 8–9. The export sits inside the fragment, so nothing downstream can show
+   a stale selection.
+4. **A warning after load above 40 000 shapes** — about the most a single TMA core yields —
+   carrying the measured timings and memory, and instructions for running locally.
+**Refused:** making the processed-GeoJSON re-export optional, which was the largest remaining
+cost at 27.9 s for a million shapes. Jose: that re-export is critical. It stays.
+**Why the guardrail is a warning and not a block:** 003. A million cells is a bad idea on the
+hosted app, not an impossible one, and a user who understands the trade-off may still want it.
+**What the research established** (documented Feb 2024, subject to change): Community Cloud
+gives 0.078–2 CPU cores, **690 MB guaranteed to 2.7 GB maximum**, 50 GB storage; apps sleep
+after 12 hours; and **every dependency is reinstalled on each reboot** with no documented wheel
+cache, so each package added lengthens every cold start.
+**Measured outcome:** the million-shape peak fell from 2 689 MB to **2 207 MB** and
+`build_collection` from 7.6 s to 1.1 s. A million cells now fits under the ceiling with headroom
+instead of sitting on it — while remaining slow enough that the guardrail is still right.
+
+## 052 — Hilbert is the default again; greedy stays available
+**Date:** 2026-08-27 · **Status:** active · **supersedes the default chosen in 047**
+**Decision:** Jose's call: "354 MB is not worth 8% shorter travel. User experience wins here."
+`DEFAULT_PATH_ORDER` is `HILBERT`. Greedy remains selectable, and `umap-learn` stays a
+dependency so it works.
+**Why:** greedy's first call costs about 354 MB of numba/umap JIT and roughly 15 seconds, against
+33 MB and a fraction of a second for hilbert, in exchange for ~8% shorter stage travel
+(197 563 px vs 213 295 px on 900 shapes). On a deployment capped at 2.7 GB that reinstalls every
+dependency on each reboot, the memory and the cold start cost more than the travel saves. Both
+still collapse collector movements from 759 to 8, which was the large win in 047 and is
+unaffected.
+**Cost accepted:** keeping greedy selectable keeps umap-learn, pynndescent and scikit-learn in
+`requirements.txt`, so every cold boot still installs them even for users who never pick it. If
+cold starts become the complaint, removing greedy entirely is the next step — but that is a
+different decision from which default to ship.
+**Verified:** goldens re-blessed after confirming, as in 047, that the coordinate multiset and
+every shape's well are unchanged and only the order differs. The Phase 5 check now asserts the
+*intent* — the default shortens the path and is not the JIT-heavy solver — rather than pinning a
+particular value.
+
+## 053 — Greedy is removed entirely, not just un-defaulted
+**Date:** 2026-08-27 · **Status:** active · **supersedes 047's dependency addition and 052**
+**Decision:** Jose's call: hilbert is enough. `umap-learn` is removed from `pyproject.toml` and
+`requirements.txt`, and `PathOrder.GREEDY` is removed from the enum and the dropdown.
+**Why:** 052 kept greedy selectable, which meant every Community Cloud cold boot still installed
+umap-learn, pynndescent, scikit-learn, joblib and threadpoolctl — five packages, reinstalled on
+every reboot with no wheel cache — for an option almost nobody would pick once it was no longer
+the default. The 8% shorter travel never justified that.
+**Why removed rather than hidden:** with the dependency gone, a `GREEDY` member left in the enum
+would be a code path that raises `ModuleNotFoundError` if anything ever reached it — a landmine
+for whoever next reads the file. Removing the member makes the absence checkable, and the Phase 5
+harness now asserts both that `PathOrder` has no `GREEDY` and that `umap` will not import.
+**Measured outcome:** five packages out of the deployed requirements; the real export's peak fell
+to **392 MB**, less than half the 767 MB before Phase 6 began. Goldens unchanged, because hilbert
+was already the default from 052.
+**What was given up:** about 8% of stage travel against greedy. Hilbert still delivers the large
+win — 62% of the unordered path length and 8 collector movements instead of 759.
