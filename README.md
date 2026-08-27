@@ -3,15 +3,9 @@
 # Introduction
 
 QuPath-to-LMD is the easiest way to go from QuPath annotations to LMD collection!
-With more than 60 unique users, we try to help everyone collect their tissues.
+With more than 60 unique users, we try to help everyone collect their tissues for DVP.
 
-Two workflows: **annotations**, where every classified annotation is cut, and **cell
-segmentation**, where you ask for a number of cells or an area per replicate and the app picks
-the cells.
-
-One word per thing: the app calls everything it cuts a **shape**, reserves **object** for
-QuPath's own vocabulary, and uses **polygon** only for the geometry type. See
-[GLOSSARY.md](GLOSSARY.md) for the full set of terms.
+Two workflows: **annotations**, the standard where every classified annotation is cut, and **cell segmentation**, where you ask for a number of cells or an area per replicate and the app picks the cells.
 
 ## In QuPath
 
@@ -46,7 +40,7 @@ set replicates and how much goes into each, either as a number of cells or as µ
 spreads the chosen cells across the tissue so a replicate is not one corner of the slide, can
 avoid cells touching another cell you are collecting, and shows you exactly which cells were
 picked before you export. Cells below a minimum area (100 µm² by default, per class) are left
-out, so the amounts you are offered are amounts you can actually collect.
+out, so keeping only the shapes you can actually collect.
 
 Both workflows let you set the smoothing tolerance and the cutting order, and both download the
 same bundle: the `.xml` for the LMD, the plate scheme, a QC image, your processed `.geojson`,
@@ -65,26 +59,9 @@ replicates and amounts, lay out the plate, check which cells were picked, and do
 
 [![Watch the video](https://img.youtube.com/vi/K8xOIg6gNCY/0.jpg)](https://youtu.be/K8xOIg6gNCY?si=g6YqzpwnHYZa69qo)
 
-## Qupath-to-LMD v3 tutorial
+## Qupath-to-LMD v3 tutorial (somewhat old)
 
 [![Watch the video](https://img.youtube.com/vi/jimBIqGUaXg/0.jpg)](https://www.youtube.com/watch?v=jimBIqGUaXg&t=2s)
-
-
-## What is the "samples_and_wells" scheme
-
-It is the text, written in the format of a python dictionary, that allows the code to understand to which well will the countours be cut into. 
-
-This is an example:
-```
-{   
-"Class_name_1" : "C3",  
-"Class_name_2" : "C5",  
-"Class_name_3" : "C7",  
-}  
-```
-Each "Class_name_" is the exact name of the class of annotation found in Qupath.
-The "C3", "C5", "C7" strings determine which well each class of shapes is collected into.
-Works for both 384-well plates and 96-well plates
 
 # Contributing
 
@@ -117,17 +94,34 @@ Nimo, J., Fritzsche, S., Valdes, D. S., Trinh, M., Pentimalli, T., Schallenberg,
 
 # FAQ
 
+(0) What is the samples and well scheme?
 
-(1) I have a KeyError type of error, what do I do? 
+It is the text, written in the format of a python dictionary, that allows the code to understand to which well will the countours be cut into. 
+
+This is an example:
+
+```python
+{   
+"Class_name_1" : "C3",  
+"Class_name_2" : "C5",  
+"Class_name_3" : "C7",  
+}  
+```
+
+Each "Class_name_" is the exact name of the class of annotation found in Qupath.
+The "C3", "C5", "C7" strings determine which well each class of shapes is collected into.
+Works for both 384-well plates and 96-well plates
+
+(1) I have a KeyError type of error, what do I do?
 
 KeyError is usually because your samples_and_wells does not match your geojson file.
 Check them, they have to be exactly the same.
 
-(2) Not sure if your .geojson file is the correct format? 
+(2) Not sure if your .geojson file is the correct format?
 
-Check the example_input folder in the repository to see how they should look like. 
+Check the example_input folder in the repository to see how they should look like.
 
-(3) I have an error what do I do? 
+(3) I have an error what do I do?
 
 Create a gihtub issue explaning what are you doing and pasting the Traceback (the code that is trying to tell you what went wrong)
 
