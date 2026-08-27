@@ -382,12 +382,17 @@ available whenever the user ticks one box.
 **Proposal — invert the current design** (`decisions.md` 011, which had the app ask and merely
 cross-check):
 
-1. If the file supports an estimate, **use it**, stated plainly with the object count and spread,
-   and offer an override behind a small "not right?" expander rather than a full-width input.
-2. If it does not, **ask** — the current input, shown only in that case, with the magnification
-   reference table that already exists.
+1. If the file supports an estimate, **use it**, stated plainly with the object count and spread.
+2. **Move the input next to the area budget control**, not a step of its own. Previous users were
+   confused about why the app wanted a pixel size at all; sitting beside "budget by area" it
+   explains itself, because that is the only thing it feeds. A small number input with a help
+   icon carrying the longer explanation and the magnification reference table.
 3. Warn if the spread across objects is wide (say >2%), since that is the signature of a mixed or
    rescaled export rather than a clean one.
+
+**Consequence for the step order.** Step 4 disappears as a separate step and the cell workflow
+becomes: 4 classes → 5 replicates, budgets and scale → 6 plate → 7 selection → 8 export. The
+scale stops being a gate the user must pass before seeing anything.
 
 **Why this is now the better trade.** 011 chose explicit entry so nobody accepts a derived number
 unread. In practice the estimate has been right every time it could be computed, and the input is
@@ -398,30 +403,41 @@ the step users stumble on. It also matters more than it did: PR 4's default mini
 
 ---
 
-## PR 4 — `feat/minimum-area-filter`: per class, default 150 µm²
+## PR 4 — `feat/minimum-area-filter`: per class, default 100 µm²
 
 **Why.** Microdissection cannot reliably collect below a certain area, and that floor is real
 regardless of what the user asks for. Different biologies have genuinely different sizes, so one
 global number is wrong — which is why the global floor added in Phase 2 was removed again
 (`decisions.md` 034), with the note that it belonged per class alongside the budgets.
 
-**What.** In the step 6 per-class editor, a third column: **minimum area (µm²), default 150.**
+**What.** In the per-class editor, a column for **minimum area (µm²), default 100** — Jose's
+figure, on the grounds that collecting less tissue than that reliably is very difficult.
 
-**Details that matter:**
+**The filter applies before anything is measured.** Jose was explicit: it runs *pre* per-replicate
+area measurement, so every figure the user sees is post-filter. Concretely, the order is:
 
-- It is a **filter**, not a count — unlike the Phase 2 version. Shapes below the floor leave the
-  candidate pool before selection.
-- **Feasibility must account for it.** Excluding shapes changes what a class can supply, so the
-  step 6 table has to report post-filter availability, or the numbers lie. On the real export at
-  0.6535 µm/px, a 150 µm² floor would exclude a large share of `Immune cells` (median 87.7 µm²)
-  and a good part of `Tumor` (median 142.8 µm²) — so this is not a cosmetic filter, and the
-  interaction with budgets is the main thing to get right.
+1. Filter each class by its minimum area.
+2. Compute per-class statistics — count, total area, median — **on what survives**.
+3. Compute feasibility against those post-filter figures.
+4. Select from the filtered pool.
+
+That ordering is the whole point: it makes "available area" mean *collectable* area. Getting it
+wrong in the other direction — filtering after the statistics — would show the user an amount
+they cannot actually have, which is exactly the class of error this app exists to prevent.
+
+**Other details:**
+
 - **Report the exclusions per class**, as counts and as a share, before the user commits.
 - Zero disables it, for a user who wants everything.
 - Recorded in `provenance.json` per class.
+- On the real export at 0.6535 µm/px, `Immune cells` has a median of 87.7 µm² and `Tumor` 142.8 —
+  so a 100 µm² floor removes roughly half the immune cells. Not cosmetic, and worth seeing on
+  screen before it silently changes what a budget can deliver.
 
 **Depends on PR 3**, because a µm² default is meaningless without a scale, and asking every user
-to type one before the default filter works would be a step backwards.
+to type one before the default filter works would be a step backwards. It also depends on PR 3's
+relocation of the scale input: the filter and the scale both belong beside the budgets, since all
+three are about how much tissue ends up in a well.
 
 ---
 
@@ -461,11 +477,13 @@ for correctness — a dropdown cannot produce a typo or a class that does not ex
 
 ## 6. Open questions for round two
 
-1. **CI?** Tests that nobody runs are decoration. A GitHub Action on every PR is the obvious
-   companion to PR 1, but it is Jose's call whether this repo wants CI.
-2. **Is 150 µm² right**, and is it right as a *single* default across biologies even though the
-   filter is per class? A default that is wrong for most classes trains users to change it, which
-   defeats the purpose.
-3. **Does the estimated pixel size need an audit trail** beyond `provenance.json` — e.g. stated on
+1. ~~CI?~~ **Settled: yes.** Jose delegated the design; PR 1 includes a GitHub Action and the
+   tests are to state plainly what is broken when they fail.
+2. ~~Is 150 µm² right?~~ **Settled: 100 µm².** Still worth watching whether one default across
+   biologies is right, given `Immune cells` sits below it on the real export.
+3. **Do the well dropdowns actually feel good?** Jose is not convinced. Build it, look at it, and
+   be willing to throw it away — the fallback is the read-only plate we have now plus the start
+   well from PR 5, which already covers the multi-slide case.
+4. **Does the estimated pixel size need an audit trail** beyond `provenance.json` — e.g. stated on
    the QC image — given PR 3 makes it the default rather than something the user typed?
-4. **Dilation** is still unanswered from round one, and still shapes what "adjacent" means.
+5. **Dilation** is still unanswered from round one, and still shapes what "adjacent" means.

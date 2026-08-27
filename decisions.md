@@ -959,3 +959,21 @@ measurements, and those are only present if the user ticked the box on export. T
 survive as the fallback; what changes is that it stops being the default path.
 **Recorded now because** it is a reversal of a decision Jose made deliberately, and the reasoning
 should be visible before the code changes rather than after.
+
+## 057 — Refinements to the round-two plan
+**Date:** 2026-08-27 · **Status:** active · refines 054, 056
+**Decision:** Three of Jose's corrections to the plan, recorded before any of it is built.
+1. **The pixel size input moves next to the area budget control** rather than being its own step.
+   Users were confused about why the app wanted it; beside "budget by area" it explains itself,
+   because that is the only thing it feeds. Small input, help icon for the longer explanation.
+   The cell workflow loses a step as a result.
+2. **The minimum area default is 100 µm², not 150** — Jose's figure, on the grounds that
+   collecting less than that reliably is very difficult.
+3. **The minimum area filter applies before anything is measured.** Statistics, feasibility and
+   selection all work on the filtered pool, so "available area" means *collectable* area. The
+   opposite ordering would show a user an amount they cannot have, which is the class of error
+   this app exists to prevent.
+**Also settled:** CI is wanted, and its design is delegated — with the explicit requirement that
+a failing test says plainly what is broken. And the well dropdowns are to be built and looked at,
+not assumed: Jose is not convinced, and the fallback is the current read-only plate plus PR 5's
+start well, which already covers the multi-slide case.
