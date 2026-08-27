@@ -1122,3 +1122,23 @@ through a PR whose entire purpose was naming.
 point, and was being dropped without a word. A user who drew three points but did not name them
 saw "This file has no calibration points" — while looking at their points. The report now carries
 `n_unnamed_points` and the app says to name them in QuPath's annotation list.
+## 064 — the GeoJSON check is one table, not a stack of warnings
+**Date:** 2026-08-27 · **Status:** active
+**Decision:** Jose's report: "the warnings are not nice to look at. They are somewhat verbose and
+people might ignore them." `upload_step` now shows one line about what the file holds, then a
+three-column table (`GeojsonReport.summary()`) — *In the file*, each finding that applies, *Ready
+to collect* — with a plain-language "What happens" for each row. No per-class or per-shape
+breakdown at this step.
+**Why:** the previous screen could stack six `st.warning` boxes before the user reached Step 2.
+Everything in them was true and rule 3 says to show it, but a wall of yellow is skimmed, and a
+skimmed warning informs nobody. Rule 3 requires the loss to be *visible*, not to be shouted. A
+table of five rows is read; six boxes are scrolled past.
+**What is deliberately not in the table:** the names of multi-class combinations and the
+MultiPolygon listing. Those are per-class detail, and the class table in Step 4/5 is where a user
+is actually deciding about classes. The `--` joining rule stays in the table's note, because it
+explains a class name they will see later and would otherwise not recognise.
+**Still a warning box:** unnamed points. That is about calibration, not about shapes, and it
+decides whether the user gets past the hard stop at Step 3.
+**Guard:** `tests/test_geojson.py` asserts a clean file yields exactly two rows (no rows of
+zeros — the noise this replaced), and that the "ignored" rows sum exactly to
+`n_shapes_in_file - n_shapes_kept`, so no drop cause can go unexplained.

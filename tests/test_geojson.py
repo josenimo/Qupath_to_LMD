@@ -284,3 +284,49 @@ def test_named_points_are_not_counted_as_unnamed(cells):
         f"All three points in this file are named, but {report.n_unnamed_points} were reported "
         "as unnamed."
     )
+
+
+def test_the_summary_only_lists_findings_that_apply(annotations, multiclass):
+    """A clean file must not produce rows of zeros.
+
+    This table replaced six warning boxes. Its whole reason for existing is that a user reads
+    it; padding it with findings that did not happen brings back the noise it was meant to
+    remove.
+    """
+    _gdf, _points, clean = annotations
+    summary = clean.summary()
+    assert list(summary.index) == ["In the file", "Ready to collect"], (
+        f"A clean file produced {list(summary.index)}. Only findings that actually apply "
+        "belong in the table."
+    )
+    assert summary.at["In the file", "Count"] == clean.n_shapes_in_file
+    assert summary.at["Ready to collect", "Count"] == clean.n_shapes_kept
+
+    _gdf, _points, messy = multiclass
+    rows = messy.summary()
+    assert rows.index[0] == "In the file" and rows.index[-1] == "Ready to collect", (
+        f"The table should read top-down from the file total to what survives; got "
+        f"{list(rows.index)}."
+    )
+    assert len(rows) > 2, "This export has unclassified and multi-class shapes; both must show."
+    for label, count in rows["Count"].items():
+        assert count > 0, f"'{label}' is in the table with a count of {count}."
+
+
+def test_the_summary_explains_every_shape_that_was_dropped(multiclass):
+    """Shapes are never dropped silently (CLAUDE.md rule 3), and this table is now the only
+    place the user is told, so a cause missing from it makes the loss invisible."""
+    _gdf, _points, report = multiclass
+    summary = report.summary()
+
+    ignored = {
+        label: int(count)
+        for label, count in summary["Count"].items()
+        if "ignored" in summary.at[label, "What happens"]
+    }
+    dropped = report.n_shapes_in_file - report.n_shapes_kept
+    assert sum(ignored.values()) == dropped, (
+        f"{dropped} shapes did not survive QC but the table explains {sum(ignored.values())} "
+        f"of them ({ignored}). A user reading it would not know where the rest went."
+    )
+    assert dropped > 0, "This fixture drops shapes, so there is something to explain."

@@ -92,40 +92,19 @@ def upload_step(step: str = "1"):
         described += f" and {len(report.calibration_point_names)} named calibration points"
     st.write(f"This file holds {described}.")
 
+    # One table rather than a stack of warning boxes. Six coloured boxes about classification
+    # and geometry got skimmed and then ignored, which defeated the point of showing them at
+    # all; the per-class detail belongs later in the workflow (`decisions.md` 064).
+    st.dataframe(report.summary(), width="stretch")
+
     if report.n_unnamed_points:
+        # Not in the table: this is about calibration, not about shapes, and it decides whether
+        # the user can get past the calibration step at all.
         st.warning(
             f"{report.n_unnamed_points} point(s) in this file have no name, so they cannot be "
             "chosen as calibration points. Name each point annotation in QuPath's annotation "
             "list and export again."
         )
-    if report.n_unclassified_dropped:
-        st.warning(
-            f"{report.n_unclassified_dropped:,} shapes have no QuPath classification, so they "
-            "cannot be assigned to a well and are ignored. Classify them in QuPath if you meant "
-            "to collect them."
-        )
-    if report.n_unnamed_classification_dropped:
-        st.warning(
-            f"{report.n_unnamed_classification_dropped:,} shapes have a QuPath classification "
-            "that carries no usable class name, so they cannot be assigned to a well and are "
-            "ignored. If you expected these, check how they are classified in QuPath."
-        )
-    if report.multiclass_counts:
-        total = sum(report.multiclass_counts.values())
-        listed = ", ".join(f"{name} ({count})" for name, count in list(report.multiclass_counts.items())[:6])
-        st.warning(
-            f"{total:,} shapes carry more than one QuPath class. Each combination becomes its "
-            f"own class, with the class names joined by `--`: {listed}. "
-            "These shapes are not counted under any of their individual classes — give each "
-            "combination its own well, or reclassify in QuPath if that is not what you want."
-        )
-    if report.n_multipolygons_dropped:
-        st.warning(
-            f"{report.n_multipolygons_dropped:,} shapes are made of several separate outlines "
-            "(MultiPolygon geometry), which the cutter cannot follow as one path. Split them in "
-            "QuPath if you need them. Processing continues without them."
-        )
-        st.table(report.multipolygons)
 
     st.success(f"File check complete, {report.n_shapes_kept} shapes available.")
     _report_scale(report.n_shapes_kept)

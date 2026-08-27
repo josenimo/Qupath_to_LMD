@@ -51,6 +51,43 @@ class GeojsonReport:
         return 0 if self.multipolygons is None else len(self.multipolygons)
 
 
+    def summary(self) -> "pandas.DataFrame":
+        """One compact table describing the file, for showing instead of a stack of warnings.
+
+        Only rows that apply are included, so a clean file produces two lines rather than six
+        with zeros in them. Per-class detail belongs later in the workflow, not here
+        (`decisions.md` 064).
+        """
+        rows = [("In the file", self.n_shapes_in_file, "")]
+        findings = [
+            (
+                "No QuPath classification",
+                self.n_unclassified_dropped,
+                "ignored — classify them in QuPath to include them",
+            ),
+            (
+                "Classification without a usable name",
+                self.n_unnamed_classification_dropped,
+                "ignored — check how they are classified in QuPath",
+            ),
+            (
+                "More than one class",
+                sum(self.multiclass_counts.values()),
+                "kept, as combined classes joined by --",
+            ),
+            (
+                "Several separate outlines",
+                self.n_multipolygons_dropped,
+                "ignored — the cutter cannot follow these as one path",
+            ),
+        ]
+        rows.extend((label, count, note) for label, count, note in findings if count)
+        rows.append(("Ready to collect", self.n_shapes_kept, ""))
+
+        frame = pandas.DataFrame(rows, columns=["Shapes", "Count", "What happens"])
+        return frame.set_index("Shapes")
+
+
 def read_and_qc(source) -> tuple[geopandas.GeoDataFrame, dict[str, list[float]], GeojsonReport]:
     """Read a QuPath GeoJSON, split off calibration points, and QC the rest.
 
