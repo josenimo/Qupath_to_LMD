@@ -247,8 +247,7 @@ def budgets_step(selected: list[str], step: str = "5") -> tuple[list[budget.Clas
         for class_name, row in edited.iterrows()
     ]
 
-    _report_minimum_area(excluded, floors, len(gdf), pixel_size_um)
-    _report_feasibility(table, budgets, mode)
+    _report_feasibility(table, budgets, mode, excluded if pixel_size_um else None)
 
     st.session_state.budget_mode = mode.value
     st.session_state.budgets = [vars(item) for item in budgets]
@@ -256,37 +255,47 @@ def budgets_step(selected: list[str], step: str = "5") -> tuple[list[budget.Clas
     return budgets, pixel_size_um, pool
 
 
-def _report_minimum_area(excluded, floors: dict, total: int, pixel_size_um: float | None) -> None:
-    """Say how much each class lost to its floor, before the user commits to an amount."""
-    if not pixel_size_um:
+def _report_feasibility(
+    table: pandas.DataFrame,
+    budgets: list[budget.ClassBudget],
+    mode: budget.BudgetMode,
+    excluded=None,
+) -> None:
+    """Show what each class is asked for against what it holds, and warn on shortfalls.
+
+    What the size filter removed is two columns of this table rather than its own warning box.
+    The box said the same thing at ten times the length, in the middle of the step where the
+    user is typing numbers, so it interrupted the very decision it was meant to inform
+    (`decisions.md` 065).
+    """
+    check = budget.feasibility(table, budgets, mode, excluded=excluded)
+    display = budget.for_display(check)
+    st.dataframe(
+        display,
+        width="stretch",
+        column_config={
+            budget.DISPLAY_COLUMNS[budget.FILTERED_SHARE]: st.column_config.NumberColumn(
+                budget.DISPLAY_COLUMNS[budget.FILTERED_SHARE],
+                format="%.1f%%",
+                help=(
+                    "Share of this class left out for being under its minimum area. Those "
+                    "shapes are gone before anything else here is counted, so every other "
+                    "figure in this row describes tissue you can actually collect."
+                ),
+            ),
+        },
+    )
+
+    if excluded is None:
         st.caption(
-            "A minimum collectable area needs the image scale, so no size filter is applied. "
-            "Enter a scale above to set one."
+            "No size filter is applied, because a minimum collectable area needs the image "
+            "scale. Enter one above to set one."
         )
-        return
-
-    dropped = int(excluded.sum())
-    if not dropped:
-        st.caption("No shapes fall below their minimum area.")
-        return
-
-    lines = "\n".join(
-        f"- **{name}**: {int(count)} shapes below {floors.get(name, 0):g} µm²"
-        for name, count in excluded.items()
-        if count
-    )
-    st.warning(
-        f"**{dropped} of {total:,} shapes are too small to collect and have been left out** "
-        "before anything below was counted, so the figures describe collectable tissue only.\n\n"
-        f"{lines}\n\n"
-        "Lower a class's minimum area if you disagree, or set it to zero to keep everything."
-    )
-
-
-def _report_feasibility(table: pandas.DataFrame, budgets: list[budget.ClassBudget], mode: budget.BudgetMode) -> None:
-    """Show what each class is asked for against what it holds, and warn on shortfalls."""
-    check = budget.feasibility(table, budgets, mode)
-    st.dataframe(budget.for_display(check), width="stretch")
+    elif int(excluded.sum()):
+        st.caption(
+            f"{int(excluded.sum()):,} shapes were too small to collect and are already left "
+            "out of the figures above. Change a class's minimum area if you disagree."
+        )
 
     short = check[check[budget.SHORTFALL] > 0]
     if not short.empty:

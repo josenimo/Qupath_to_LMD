@@ -1122,6 +1122,7 @@ through a PR whose entire purpose was naming.
 point, and was being dropped without a word. A user who drew three points but did not name them
 saw "This file has no calibration points" — while looking at their points. The report now carries
 `n_unnamed_points` and the app says to name them in QuPath's annotation list.
+
 ## 064 — the GeoJSON check is one table, not a stack of warnings
 **Date:** 2026-08-27 · **Status:** active
 **Decision:** Jose's report: "the warnings are not nice to look at. They are somewhat verbose and
@@ -1142,3 +1143,22 @@ decides whether the user gets past the hard stop at Step 3.
 **Guard:** `tests/test_geojson.py` asserts a clean file yields exactly two rows (no rows of
 zeros — the noise this replaced), and that the "ignored" rows sum exactly to
 `n_shapes_in_file - n_shapes_kept`, so no drop cause can go unexplained.
+
+## 065 — the size filter reports itself in the feasibility table, not in prose
+**Date:** 2026-08-27 · **Status:** active · **extends 060**
+**Decision:** Jose: "that whole box of text is too much and cuts the flow a bit… I think adding
+two columns to the bottom table could communicate this info." `_report_minimum_area` is gone.
+`budget.feasibility` takes an optional `excluded` series and adds **Too small to collect** (count)
+and **% too small** (share of that class's own shapes) to the table already on screen. One caption
+under it gives the total and says the minimum area can be changed.
+**Why:** the box appeared in the middle of the step where the user is typing replicates and
+amounts, so it interrupted the decision it was meant to inform. The information is per class, and
+there was already a per-class table three lines below it — putting it there costs no vertical space
+at all and lets the user compare classes, which the prose list did not.
+**The share is of the class, not of the file.** A class that loses 80% of itself must read 80%. As
+a share of the file the same loss could read 2% and the user would sign off on a replicate with
+almost nothing in it.
+**Fixed while doing it:** raising one class's floor above every shape in it dropped that class from
+the pool and `feasibility` then raised `KeyError` on `stats.at[...]` — a traceback instead of the
+app, one keystroke away in an editable column. A class absent from the pool now reads as zero
+available, 100% too small.

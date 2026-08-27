@@ -2,7 +2,7 @@
 
 import pytest
 
-from qupath_to_lmd import budget, stats
+from qupath_to_lmd import budget, model, stats
 from tests.conftest import CELLS_PIXEL_SIZE
 
 
@@ -82,3 +82,69 @@ def test_display_renames_and_rounds_without_touching_the_replicate_count(cells_g
     assert display[budget.DISPLAY_COLUMNS[budget.REPLICATES]].iloc[0] == 2, (
         "Replicate counts must stay exact integers; they are not measurements."
     )
+
+
+def test_the_table_reports_what_the_size_filter_took(cells_gdf):
+    """The share is of the class's own shapes, not of the whole file.
+
+    This column replaced a warning box. If it were computed against the file total, a class
+    that lost most of itself would read as a small percentage and the user would sign off on a
+    collection with almost nothing in it.
+    """
+    floors = dict.fromkeys(cells_gdf[model.CLASS_NAME].unique(), 0.0)
+    biggest = cells_gdf[model.CLASS_NAME].value_counts().index[0]
+    areas = cells_gdf.loc[cells_gdf[model.CLASS_NAME] == biggest].geometry.area
+    floors[biggest] = float(areas.median()) * CELLS_PIXEL_SIZE**2
+
+    pool, excluded = stats.filter_by_minimum_area(cells_gdf, floors, CELLS_PIXEL_SIZE)
+    table = stats.class_statistics(pool, pixel_size_um=CELLS_PIXEL_SIZE)
+    budgets = [budget.ClassBudget(name, 1, 1) for name in floors]
+
+    check = budget.feasibility(table, budgets, budget.BudgetMode.CELLS, excluded=excluded)
+
+    dropped = check.at[biggest, budget.FILTERED]
+    kept = table.at[biggest, "shapes"]
+    expected = 100.0 * dropped / (dropped + kept)
+    assert dropped > 0, "A floor at the median area should have removed about half the class."
+    assert check.at[biggest, budget.FILTERED_SHARE] == pytest.approx(expected), (
+        "The percentage must be of this class's shapes. Computed against another total it "
+        "understates the loss and the user under-collects."
+    )
+    for name in floors:
+        if name != biggest:
+            assert check.at[name, budget.FILTERED] == 0, (
+                f"{name} has no floor, so nothing of it should be reported as filtered."
+            )
+
+
+def test_a_class_filtered_away_entirely_reads_as_empty_not_a_crash(cells_gdf):
+    """Raising one class's minimum above every shape in it used to raise KeyError.
+
+    The floor is typed into a table, so it takes one keystroke to exclude a whole class. That
+    must show up as zero available, not as a traceback in place of the app.
+    """
+    name = cells_gdf[model.CLASS_NAME].value_counts().index[0]
+    floors = {name: 1e12}
+    pool, excluded = stats.filter_by_minimum_area(cells_gdf, floors, CELLS_PIXEL_SIZE)
+    table = stats.class_statistics(pool, pixel_size_um=CELLS_PIXEL_SIZE)
+    assert name not in table.index, "Fixture check: the class should be gone from the pool."
+
+    check = budget.feasibility(
+        table, [budget.ClassBudget(name, 2, 50.0)], budget.BudgetMode.CELLS, excluded=excluded
+    )
+
+    assert check.at[name, budget.AVAILABLE] == 0
+    assert check.at[name, budget.ACHIEVABLE] == 0
+    assert check.at[name, budget.SHORTFALL] == 100.0
+    assert check.at[name, budget.FILTERED_SHARE] == 100.0, (
+        "Every shape in the class was filtered, so the column should say 100%."
+    )
+
+
+def test_the_filter_columns_are_absent_without_a_scale(cells_gdf):
+    """No scale means no size filter, so the columns must not appear as a row of zeros."""
+    table = stats.class_statistics(cells_gdf)
+    budgets = [budget.ClassBudget(name, 1, 1) for name in cells_gdf[model.CLASS_NAME].unique()]
+    check = budget.feasibility(table, budgets, budget.BudgetMode.CELLS)
+    assert budget.FILTERED not in check.columns
+    assert budget.DISPLAY_COLUMNS[budget.FILTERED] not in budget.for_display(check).columns

@@ -267,12 +267,14 @@ categoricals × replicate count, cycling 6 hard-coded colours as Java signed int
   shape counts alone and only the *cells* budget mode is offered, with a caption saying why.
   Nothing expressible in cell counts is ever blocked.
 - `budget.BudgetMode` is `CELLS` or `AREA`; `mode.stats_column` maps to `shapes` or
-  `area_total_um2`, and `budget.feasibility` raises `KeyError` if that column is absent —
-  which is how an area budget without a scale fails, loudly, in the library rather than
-  silently in the UI.
+  `area_total_um2`, and `budget.feasibility` raises `KeyError` if that column is absent from a
+  non-empty frame — which is how an area budget without a scale fails, loudly, in the library
+  rather than silently in the UI. A class merely *missing* from the frame is not an error: it
+  reads as zero available, which is what a class filtered away entirely looks like.
 - `budget.feasibility` returns per class: replicates, per-replicate amount, total requested,
   available, shortfall, and **how many whole replicates the class can actually fill**. That
-  last number is the actionable one.
+  last number is the actionable one. Pass `excluded=` and it also reports what the size filter
+  took (see *Minimum collectable area*).
 - Shortfalls **warn and continue** (003) — a user may knowingly accept a partly-filled
   replicate.
 - The per-class editor defaults to **the whole class in a single replicate**, which is what
@@ -296,6 +298,12 @@ categoricals × replicate count, cycling 6 hard-coded colours as Java signed int
   onto it.
 - Without a scale nothing is filtered, because a µm² floor cannot be evaluated — and the editor
   hides the column and says why.
+- **What it removed is reported as two columns of the feasibility table**, not as its own message:
+  `budget.feasibility(..., excluded=...)` adds `filtered_by_area` (count) and `filtered_share`
+  (percentage of *that class's* shapes), shown as "Too small to collect" and "% too small"
+  (`decisions.md` 065). A caption under the table gives the total.
+- A class whose floor excludes every shape in it is absent from the statistics frame; `feasibility`
+  treats that as zero available and 100% too small, rather than raising `KeyError`.
 - On `Single_cells.geojson` a 100 µm² floor excludes 21 of 121 shapes and lifts the surviving
   median from 157 to 170 µm².
 - Recorded per class in `provenance.json`.
