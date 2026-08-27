@@ -543,6 +543,33 @@ yields) with these figures and instructions for running locally (`decisions.md` 
 - Together these took the million-shape peak from 2 689 MB to **2 207 MB**, and
   `build_collection` from 7.6 s to 1.1 s (the latter mostly by defaulting to hilbert).
 
+## Test suite
+
+`tests/`, run with `uv run pytest` — 119 tests in about 5 seconds. `-m "not slow"` skips the
+golden gate for a fast loop. CI runs ruff, the suite and the harness on every push and PR
+(`.github/workflows/ci.yml`).
+
+- **No environment setup needed**: `conftest.py` forces `MPLBACKEND=Agg` before anything imports
+  pyplot, because py-lmd's `Collection.plot` calls `plt.show()` and hangs under a GUI backend.
+  It also silences loguru so assertions are not buried in log lines.
+- **Only committed files and generated fixtures.** The real 83.7 MB export is deliberately not a
+  dependency, so CI runs from the repo alone. `synthetic_cells` builds QuPath-shaped exports of
+  any size on demand.
+- Two fixtures encode quirks that no committed file shows: `touching_chain` (20 squares in a row,
+  largest non-touching set exactly 10, so the adjacency preference can be checked against a known
+  optimum) and `near_touching_chain` (0.5 px gaps, reproducing the sub-pixel separation real
+  QuPath segmentation leaves between adjacent cells).
+- **Assertions say what breaks in the app**, not just which value differed. The golden test
+  extracts the harness's DIFFER lines and explains re-blessing, rather than dumping subprocess
+  output.
+- Statistical properties are asserted **against baselines**, never absolute thresholds: spread
+  quality against a random draw, replicate interleaving against shuffled labels averaged over
+  seeds. A single draw compared against its own tail fails by chance, which was learned in
+  Phase 4.
+- Deliberately avoided: asserting that a package is absent by importing it. A stale virtualenv
+  still has umap-learn after it is undeclared, so that test passed in CI and failed locally. The
+  suite checks the declared dependencies instead.
+
 ## Regression harness
 
 `tools/golden_harness.py`, with the reference output in `tools/golden/` (8 files, ~220 KB).

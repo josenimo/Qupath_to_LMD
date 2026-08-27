@@ -1,0 +1,256 @@
+"""Reading and QC of QuPath GeoJSON.
+
+Failures here mean the app is misreading its only input format, so each test says what shape
+of real export it stands for.
+"""
+
+import json
+
+import pytest
+
+from qupath_to_lmd import geojson
+from qupath_to_lmd.model import CLASS_NAME
+from tests.conftest import ANNOTATIONS_FILE, CELLS_FILE
+
+
+def test_crs_is_cleared_so_areas_are_computed_on_pixels(cells_gdf):
+    """QuPath coordinates are image pixels, but GeoJSON's default CRS is EPSG:4326.
+
+    Left alone, geopandas treats them as longitude/latitude and every area and distance is
+    computed against a geographic projection — silently wrong, and the basis of every µm²
+    figure in the app.
+    """
+    assert cells_gdf.crs is None, (
+        f"Expected no CRS so that .area works on pixels, but the frame is tagged {cells_gdf.crs}. "
+        "Areas and distances will be computed against a geographic projection and be wrong."
+    )
+    assert cells_gdf.geometry.area.sum() > 0, "Areas came out as zero or negative on pixel coordinates."
+
+
+def test_calibration_points_are_found_and_removed(cells):
+    """Named Point geometries become the calibration pool and leave the shape frame.
+
+    If they stayed, they would be treated as cuttable shapes.
+    """
+    gdf, points, report = cells
+    assert list(points) == ["calib1", "calib2", "calib3"], (
+        f"Expected the three named calibration points from the demo file, got {list(points)}."
+    )
+    assert "Point" not in set(gdf.geometry.geom_type), (
+        "Calibration points are still in the shape frame; they would be exported as shapes to cut."
+    )
+    assert report.calibration_point_names == list(points)
+
+
+def test_a_file_without_calibration_points_still_reads(tmp_path):
+    """QuPath omits a property entirely when no object carries it.
+
+    So a file with no calibration points has no `name` column at all. That is the commonest
+    shape of a "broken" export and it is not broken — the user has not added the points yet.
+    Rejecting it here would be wrong; the calibration step is where that is reported.
+    """
+    document = json.loads(open(CELLS_FILE).read())
+    document["features"] = [f for f in document["features"] if f["geometry"]["type"] != "Point"]
+    path = tmp_path / "no_calibs.geojson"
+    path.write_text(json.dumps(document))
+
+    gdf, points, _report = geojson.read_and_qc(str(path))
+    assert points == {}, f"Expected no calibration points, got {list(points)}."
+    assert len(gdf) > 0, (
+        "A file with no calibration points was read as empty. It should load fine — only the "
+        "calibration step should object."
+    )
+
+
+def test_multiclass_objects_become_one_combined_class(multiclass):
+    """QuPath writes multi-class objects as `names` (plural), which single-class parsing misses.
+
+    Read naively they come out as None, which used to crash the plate layout. They are joined
+    with `--`, sorted, so one set of classes always yields one class name.
+    """
+    gdf, _points, report = multiclass
+    assert report.multiclass_counts == {"Immune cells--Tumor": 24}, (
+        f"Expected 24 multi-class shapes named 'Immune cells--Tumor', got {report.multiclass_counts}."
+    )
+    assert not gdf[CLASS_NAME].isna().any(), (
+        "Some shapes have no class name. A None class breaks the plate layout, which sorts class names."
+    )
+
+
+@pytest.mark.parametrize(
+    ("names", "expected"),
+    [
+        ({"name": "Tumor"}, "Tumor"),
+        ({"names": ["Tumor", "Immune cells"]}, "Immune cells--Tumor"),
+        ({"names": ["Immune cells", "Tumor"]}, "Immune cells--Tumor"),
+        ({"names": ["Stroma", "Tumor", "B cell"]}, "B cell--Stroma--Tumor"),
+        ({"color": [1, 2, 3]}, None),
+    ],
+)
+def test_class_names_are_order_independent(names, expected):
+    """The same set of classes must always give the same name, whatever order QuPath wrote it.
+
+    Otherwise one biological category splits across two wells depending on export order.
+    """
+    assert geojson._classification_name(names) == expected, (
+        f"Classification {names} resolved to {geojson._classification_name(names)!r}, expected {expected!r}."
+    )
+
+
+def test_multipoint_calibration_annotations_are_split(tmp_path):
+    """QuPath's point tool can put several points into one annotation, exporting as MultiPoint.
+
+    All three would be unreachable if only Point were handled.
+    """
+    document = json.loads(open(CELLS_FILE).read())
+    points = [f for f in document["features"] if f["geometry"]["type"] == "Point"]
+    coordinates = [f["geometry"]["coordinates"] for f in points]
+    document["features"] = [f for f in document["features"] if f["geometry"]["type"] != "Point"]
+    document["features"].insert(
+        0,
+        {
+            "type": "Feature",
+            "id": "mp",
+            "properties": {"objectType": "annotation", "name": "calibs"},
+            "geometry": {"type": "MultiPoint", "coordinates": coordinates},
+        },
+    )
+    path = tmp_path / "multipoint.geojson"
+    path.write_text(json.dumps(document))
+
+    gdf, found, _report = geojson.read_and_qc(str(path))
+    assert list(found) == ["calibs #1", "calibs #2", "calibs #3"], (
+        f"A MultiPoint annotation should expose each point separately, got {list(found)}."
+    )
+    assert [list(v) for v in found.values()] == coordinates, "MultiPoint coordinates were not preserved in order."
+    assert "MultiPoint" not in set(gdf.geometry.geom_type), "MultiPoint left in the shape frame."
+
+
+def test_unclassified_and_unnamed_objects_are_dropped_with_counts(tmp_path):
+    """Anything the app cannot assign to a well is dropped — but never silently.
+
+    The count is what the UI reports, so losing it means losing the user's only notice.
+    """
+    document = json.loads(open(ANNOTATIONS_FILE).read())
+    polygons = [f for f in document["features"] if f["geometry"]["type"] == "Polygon"]
+    for feature in polygons[:2]:
+        feature["properties"].pop("classification", None)
+    for feature in polygons[2:3]:
+        feature["properties"]["classification"] = {"color": [1, 2, 3]}
+    path = tmp_path / "messy.geojson"
+    path.write_text(json.dumps(document))
+
+    gdf, _points, report = geojson.read_and_qc(str(path))
+    assert report.n_unclassified_dropped == 2, (
+        f"Expected 2 unclassified objects counted, got {report.n_unclassified_dropped}. "
+        "The UI shows this count; without it the user is not told what was dropped."
+    )
+    assert report.n_unnamed_classification_dropped == 1, (
+        f"Expected 1 classification with no usable name, got {report.n_unnamed_classification_dropped}."
+    )
+    assert len(gdf) == len(polygons) - 3
+
+
+def test_multipolygons_are_reported_and_dropped(tmp_path):
+    """py-lmd cuts one closed path per shape, so a MultiPolygon has no meaning.
+
+    The report table used to select a column QuPath never writes, which raised KeyError for
+    anyone who actually had one.
+    """
+    document = json.loads(open(ANNOTATIONS_FILE).read())
+    for feature in document["features"]:
+        if feature["geometry"]["type"] == "Polygon":
+            feature["geometry"] = {
+                "type": "MultiPolygon",
+                "coordinates": [
+                    [[[0, 0], [10, 0], [10, 10], [0, 10], [0, 0]]],
+                    [[[50, 50], [60, 50], [60, 60], [50, 60], [50, 50]]],
+                ],
+            }
+            break
+    path = tmp_path / "multipolygon.geojson"
+    path.write_text(json.dumps(document))
+
+    gdf, _points, report = geojson.read_and_qc(str(path))
+    assert report.n_multipolygons_dropped == 1, (
+        f"Expected 1 MultiPolygon reported, got {report.n_multipolygons_dropped}."
+    )
+    assert report.multipolygons is not None and not report.multipolygons.empty, (
+        "The MultiPolygon report table is empty, so the UI has nothing to show the user."
+    )
+    assert "MultiPolygon" not in set(gdf.geometry.geom_type)
+
+
+def test_unused_columns_are_dropped_to_keep_large_files_affordable(cells_gdf):
+    """`measurements` is ~22% of the frame at scale and is read exactly once, during the read.
+
+    `name` only ever labelled calibration points, which have already gone.
+    """
+    for column in ("measurements", "name", "isLocked"):
+        assert column not in cells_gdf.columns, (
+            f"Column {column!r} survived the read. It is unused downstream and costs memory that "
+            "matters on a 2.7 GB deployment."
+        )
+    for column in ("id", "objectType", "classification", "geometry", CLASS_NAME):
+        assert column in cells_gdf.columns, (
+            f"Column {column!r} is missing. It is needed either for the export or for the "
+            "QuPath round-trip."
+        )
+
+
+def test_implied_pixel_size_is_derived_during_the_read(cells):
+    """QuPath areas are µm² while coordinates are pixels, so the scale is recoverable.
+
+    Derived once while the file is open, because the measurement strings are dropped after.
+    """
+    _gdf, _points, report = cells
+    assert report.implied_pixel_size_um == pytest.approx(0.3467, abs=5e-4), (
+        f"Expected ~0.3467 µm/px implied by this file's own measurements, got "
+        f"{report.implied_pixel_size_um}."
+    )
+    assert report.n_area_measurements == 121, (
+        f"Expected 121 measured cells, got {report.n_area_measurements}."
+    )
+    assert report.pixel_size_spread < 0.01, (
+        f"Implied scale varies by {report.pixel_size_spread:.1%} across objects, which suggests "
+        "the derivation is picking up the wrong field."
+    )
+
+
+def test_a_file_without_measurements_implies_no_scale(annotations):
+    """Annotation exports carry no area measurements, so the app must ask instead of guessing."""
+    _gdf, _points, report = annotations
+    assert report.implied_pixel_size_um is None, (
+        f"An annotation-only file should imply no scale, got {report.implied_pixel_size_um}."
+    )
+    assert report.n_area_measurements == 0
+
+
+def test_explode_is_idempotent_across_repeated_runs(cells_gdf):
+    """Exploding twice must not produce `T-Cell_001_001`.
+
+    The original name is remembered so matching always happens against it.
+    """
+    once = geojson.explode_classes(cells_gdf, ["single_cells_demo"])
+    twice = geojson.explode_classes(once, ["single_cells_demo"])
+    assert sorted(once[CLASS_NAME]) == sorted(twice[CLASS_NAME]), (
+        "Exploding an already-exploded class changed the names, so re-running the step corrupts them."
+    )
+    assert "single_cells_demo_001" in set(once[CLASS_NAME])
+
+
+def test_empty_file_is_rejected(tmp_path):
+    """An empty FeatureCollection cannot produce anything, so it raises rather than warns."""
+    path = tmp_path / "empty.geojson"
+    path.write_text('{"type": "FeatureCollection", "features": []}')
+    with pytest.raises(geojson.GeojsonError, match="no features"):
+        geojson.read_and_qc(str(path))
+
+
+def test_sanitize_keeps_what_qupath_needs_back(cells_gdf):
+    """The processed GeoJSON must re-open in QuPath, which needs these four fields and no NaNs."""
+    sanitized = geojson.sanitize_for_qupath(cells_gdf)
+    assert list(sanitized.columns) == ["id", "objectType", "classification", "geometry"], (
+        f"QuPath needs exactly these columns to re-import; got {list(sanitized.columns)}."
+    )
+    assert not sanitized.isna().to_numpy().any(), "NaNs survived, and QuPath rejects NaN-bearing properties."

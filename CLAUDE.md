@@ -116,20 +116,26 @@ Rules that follow from that split:
 - `uv run ruff check <files-I-touched>` must be clean for those files before I commit.
   The repo has a pre-existing backlog of ruff findings (see `facts.md`) — I do not
   bulk-fix it as a side effect of a feature commit; that is its own `chore/` branch.
+- **`uv run pytest` must pass before I commit.** The suite lives in `tests/` and needs no
+  environment setup — `conftest.py` forces the Agg matplotlib backend, without which py-lmd's
+  `plt.show()` hangs. `uv run pytest -m "not slow"` skips the golden gate for a quick loop.
+- When I add behaviour, I add a test for it, and the test's assertion message says **what
+  breaks in the app** when it fails — not just which value differed. A failing test that does
+  not explain the consequence is a puzzle, not a warning.
 - **`uv run python tools/golden_harness.py check` must pass before I commit any change
   that touches geometry, calibration, well assignment or export.** It compares the XML and
   CSV byte-for-byte against `tools/golden/`. A coordinate shifted by a pixel or an inverted
   Y flip is invisible in the running app and this is the only thing that catches it.
+  `tests/test_golden.py` runs it too, so CI enforces it.
   - If output is *meant* to change, I re-bless with `capture`, say so explicitly in the
     commit message, and explain why the new bytes are correct. I never re-bless to make a
     red check go green, and I never hand-edit files in `tools/golden/`.
   - When I add a code path the four cases do not cover, I add a case.
-- There is no test suite (pytest was deliberately removed, see `decisions.md`). So for
-  logic changes beyond the harness's reach I write a throwaway script in the scratchpad
-  that imports from `src/qupath_to_lmd/` and exercises the function on a demo geojson, and
-  I paste the relevant output into my report. Throwaway scripts stay out of the repo.
-- `src/qupath_to_lmd/mock_streamlit.py` (`patch_streamlit()`) lets `core`/`utils` run
-  outside Streamlit — I use it for those scripts instead of standing up a fake session.
+- Tests use only files committed to the repo, or fixtures that generate what they need. The
+  real 83.7 MB export is not a dependency, because CI has to run without it.
+- For UI behaviour, `tests/test_ui_behaviour.py` stubs Streamlit via monkeypatch and records
+  what was shown, so the hard stops and the warning-versus-note distinction are covered without
+  a browser. `src/qupath_to_lmd/mock_streamlit.py` remains for notebook use.
 
 ## 7. Dependencies
 
