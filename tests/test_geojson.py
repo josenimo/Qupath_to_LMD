@@ -295,20 +295,23 @@ def test_the_summary_only_lists_findings_that_apply(annotations, multiclass):
     """
     _gdf, _points, clean = annotations
     summary = clean.summary()
-    assert list(summary.index) == ["In the file", "Ready to collect"], (
+    assert list(summary.index) == ["In the file"], (
         f"A clean file produced {list(summary.index)}. Only findings that actually apply "
         "belong in the table."
     )
     assert summary.at["In the file", "Count"] == clean.n_shapes_in_file
-    assert summary.at["Ready to collect", "Count"] == clean.n_shapes_kept
 
     _gdf, _points, messy = multiclass
     rows = messy.summary()
-    assert rows.index[0] == "In the file" and rows.index[-1] == "Ready to collect", (
-        f"The table should read top-down from the file total to what survives; got "
+    assert rows.index[0] == "In the file", (
+        f"The table should start from the file total and list findings under it; got "
         f"{list(rows.index)}."
     )
-    assert len(rows) > 2, "This export has unclassified and multi-class shapes; both must show."
+    assert "Ready to collect" not in rows.index, (
+        "The surviving count belongs to the success message, not the table — showing it in "
+        "both leaves the reader deciding which one to trust."
+    )
+    assert len(rows) > 1, "This export has unclassified and multi-class shapes; both must show."
     for label, count in rows["Count"].items():
         assert count > 0, f"'{label}' is in the table with a count of {count}."
 

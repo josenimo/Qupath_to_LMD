@@ -106,7 +106,8 @@ def upload_step(step: str = "1"):
             "list and export again."
         )
 
-    st.success(f"File check complete, {report.n_shapes_kept} shapes available.")
+    # Carries the surviving count now that the table above does not repeat it.
+    st.success(f"File check complete, {report.n_shapes_kept:,} shapes are ready to collect.")
     _report_scale(report.n_shapes_kept)
     return uploaded_file
 

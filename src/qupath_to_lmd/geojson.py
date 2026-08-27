@@ -54,9 +54,13 @@ class GeojsonReport:
     def summary(self) -> "pandas.DataFrame":
         """One compact table describing the file, for showing instead of a stack of warnings.
 
-        Only rows that apply are included, so a clean file produces two lines rather than six
+        Only rows that apply are included, so a clean file produces one line rather than six
         with zeros in them. Per-class detail belongs later in the workflow, not here
         (`decisions.md` 064).
+
+        The count that survives QC is deliberately absent: the success message below the table
+        already gives it, and saying it twice on one screen invites the reader to work out
+        which of the two is authoritative.
         """
         rows = [("In the file", self.n_shapes_in_file, "")]
         findings = [
@@ -82,7 +86,6 @@ class GeojsonReport:
             ),
         ]
         rows.extend((label, count, note) for label, count, note in findings if count)
-        rows.append(("Ready to collect", self.n_shapes_kept, ""))
 
         frame = pandas.DataFrame(rows, columns=["Shapes", "Count", "What happens"])
         return frame.set_index("Shapes")

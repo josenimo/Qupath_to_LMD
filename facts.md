@@ -150,10 +150,11 @@ the two workflows reach the shared steps at different points.
    Returns `(gdf, calibration_points, GeojsonReport)`. The report is rendered by the app,
    not by the library.
    **The app shows it as one table**, not a stack of warnings: `GeojsonReport.summary()`
-   returns a frame — *In the file*, one row per finding that actually applies, *Ready to
-   collect* — plus a "What happens" note per row (`decisions.md` 064). Rows with a zero count
-   are omitted, so a clean file shows two lines. The only warning box left at this step is
-   unnamed points, which is about calibration rather than shapes.
+   returns a frame — *In the file*, then one row per finding that actually applies — plus a
+   "What happens" note per row (`decisions.md` 064). Rows with a zero count are omitted, so a
+   clean file shows one line. The surviving count is **not** in the table; the `st.success`
+   line under it carries that. The only warning box left at this step is unnamed points, which
+   is about calibration rather than shapes.
    Invariant, asserted in `tests/test_geojson.py`: the rows whose note says "ignored" sum to
    `n_shapes_in_file - n_shapes_kept`, so every dropped shape is accounted for on screen.
 1.1 **Calibration selection** — three `st.selectbox`es pick 3 names from the pool, order

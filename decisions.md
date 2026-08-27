@@ -1127,9 +1127,12 @@ saw "This file has no calibration points" — while looking at their points. The
 **Date:** 2026-08-27 · **Status:** active
 **Decision:** Jose's report: "the warnings are not nice to look at. They are somewhat verbose and
 people might ignore them." `upload_step` now shows one line about what the file holds, then a
-three-column table (`GeojsonReport.summary()`) — *In the file*, each finding that applies, *Ready
-to collect* — with a plain-language "What happens" for each row. No per-class or per-shape
-breakdown at this step.
+three-column table (`GeojsonReport.summary()`) — *In the file*, then each finding that applies —
+with a plain-language "What happens" for each row. No per-class or per-shape breakdown at this
+step. **The surviving count is not a row**: Jose asked for it to come from the `st.success`
+line instead, which already said it. Two figures for the same thing on one screen makes the
+reader work out which is authoritative, so the table states the file total and the deductions
+and the success line states the answer.
 **Why:** the previous screen could stack six `st.warning` boxes before the user reached Step 2.
 Everything in them was true and rule 3 says to show it, but a wall of yellow is skimmed, and a
 skimmed warning informs nobody. Rule 3 requires the loss to be *visible*, not to be shouted. A
@@ -1140,8 +1143,9 @@ is actually deciding about classes. The `--` joining rule stays in the table's n
 explains a class name they will see later and would otherwise not recognise.
 **Still a warning box:** unnamed points. That is about calibration, not about shapes, and it
 decides whether the user gets past the hard stop at Step 3.
-**Guard:** `tests/test_geojson.py` asserts a clean file yields exactly two rows (no rows of
-zeros — the noise this replaced), and that the "ignored" rows sum exactly to
+**Guard:** `tests/test_geojson.py` asserts a clean file yields exactly one row (no rows of
+zeros — the noise this replaced), that no row restates the surviving count, and that the
+"ignored" rows sum exactly to
 `n_shapes_in_file - n_shapes_kept`, so no drop cause can go unexplained.
 
 ## 065 — the size filter reports itself in the feasibility table, not in prose
