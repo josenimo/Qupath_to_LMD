@@ -913,3 +913,37 @@ to **392 MB**, less than half the 767 MB before Phase 6 began. Goldens unchanged
 was already the default from 052.
 **What was given up:** about 8% of stage travel against greedy. Hilbert still delivers the large
 win — 62% of the unordered path length and 8 collector movements instead of 759.
+
+## 058 — A pytest suite and CI, replacing the scratchpad scripts
+**Date:** 2026-08-27 · **Status:** active · **supersedes 006 and 008**
+**Decision:** `tests/` holds 119 pytest tests covering the library layer, the UI behaviour that
+protects a collection, and the golden gate. `.github/workflows/ci.yml` runs ruff, the suite and
+the harness on every push and pull request. `CLAUDE.md` rule 6 now requires `uv run pytest` before
+any commit.
+**Why now:** 006 deferred this on the grounds that the code was too entangled with
+`st.session_state` to test well, and 008 confirmed features came first. Neither holds any more —
+since Phase 0 the library is pure, and round one accumulated nine verification scripts with ~130
+assertions that lived in a session scratchpad and vanished with it. That was the wrong home for
+the only checks this app had.
+**Choices worth recording:**
+- **`conftest.py` forces `MPLBACKEND=Agg`** before anything imports pyplot. Without it a plain
+  `pytest` hangs, because py-lmd's `Collection.plot` calls `plt.show()`. Documenting that as a
+  required environment variable would have been a footgun; removing the need is better.
+- **Assertion messages state what breaks in the app**, per Jose's request. The golden test
+  extracts the harness's DIFFER lines and explains re-blessing rather than dumping subprocess
+  output, because the useful line was otherwise buried under log noise.
+- **Statistical properties are asserted against baselines**, never absolute thresholds — spread
+  against a random draw, interleaving against shuffled labels over several seeds. A single draw
+  compared with its own 95th percentile fails 5% of the time by construction, which Phase 4 had
+  already paid for once.
+- **Only committed files and generated fixtures.** CI cannot see the real 83.7 MB export, so
+  nothing depends on it. Two fixtures encode quirks no committed file shows: a 20-square touching
+  chain with a known optimum of 10, and a chain with 0.5 px gaps reproducing the sub-pixel
+  separation real QuPath segmentation leaves.
+**A test that was written and then rejected:** asserting umap-learn is gone by attempting
+`import umap`. It passed in CI and failed locally, because a stale virtualenv keeps the package
+after it is undeclared. The suite checks the declared dependencies and the source instead — an
+environment-dependent test is worse than no test, because it teaches people to ignore red.
+**Verified by breaking things on purpose:** inverting the Y flip fails two tests, one naming the
+transform and one naming all five differing artefacts; setting the neighbour distance to zero
+fails with an explanation of why strict intersection finds nothing on a real segmentation.
