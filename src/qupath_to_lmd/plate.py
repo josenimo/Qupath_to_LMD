@@ -1,7 +1,9 @@
 """Well plates: which wells are usable, laying samples out on them, and reading layouts back."""
 
 import ast
+import math
 import string
+from enum import Enum
 from random import Random
 
 import pandas
@@ -98,6 +100,112 @@ def assign_wells(
     if randomize:
         available = Random(seed).sample(available, len(available))
     return dict(zip(ordered, available, strict=False))
+
+
+class PlateDistribution(str, Enum):
+    """How samples are spread over several plates."""
+
+    BALANCED = "balanced"
+    SEQUENTIAL = "sequential"
+
+
+def plate_names(n_plates: int) -> list[str]:
+    """`P1`, `P2`, … — the names plates carry in the interface and the download."""
+    return [f"P{number}" for number in range(1, n_plates + 1)]
+
+
+def plates_needed(n_samples: int, usable_wells: int, first_plate_wells: int | None = None) -> int:
+    """The fewest plates that hold every sample. The first plate may start part-way through."""
+    if usable_wells <= 0:
+        raise ValueError("No usable wells on this plate, so no number of plates can hold the samples.")
+    first = usable_wells if first_plate_wells is None else first_plate_wells
+    if n_samples <= first:
+        return 1
+    return 1 + math.ceil((n_samples - first) / usable_wells)
+
+
+def _class_of(group: str) -> str:
+    """`Tumor_r2` belongs to `Tumor`; a key without a replicate is its own class."""
+    head, separator, tail = group.rpartition("_r")
+    return head if separator and tail.isdigit() else group
+
+
+def _replicate_of(group: str) -> int:
+    head, separator, tail = group.rpartition("_r")
+    return int(tail) if separator and tail.isdigit() else 0
+
+
+def assign_to_plates(
+    groups: list[str],
+    wells: list[str],
+    n_plates: int = 1,
+    distribution: PlateDistribution = PlateDistribution.BALANCED,
+    randomize: bool = False,
+    seed: int = 0,
+    start_well: str | None = None,
+) -> dict[str, tuple[str, str]]:
+    """Map each group to a plate and a well.
+
+    BALANCED deals each class's replicates round-robin over the plates, each class starting on
+    whichever plate has the most room, so every plate holds every class where the replicate count
+    allows. Filling plate 1 first would put whole classes on one plate — `assign_wells` sorts
+    groups — and a plate effect would then read as a difference between classes
+    (`decisions.md` 076). SEQUENTIAL fills plate 1, then plate 2.
+
+    Within a plate, wells come from `assign_wells`, so one plate gives exactly the layout the
+    app has always produced. `start_well` applies to the first plate only. Groups that fit on no
+    plate are left out of the result, for the caller to report.
+    """
+    wells_by_plate = {
+        name: (wells_from(wells, start_well) if position == 0 else list(wells))
+        for position, name in enumerate(plate_names(max(1, n_plates)))
+    }
+    if len(wells_by_plate) == 1:
+        (name, plate_wells), = wells_by_plate.items()
+        return {group: (name, well) for group, well in assign_wells(groups, plate_wells, randomize, seed).items()}
+
+    room = {name: len(plate_wells) for name, plate_wells in wells_by_plate.items()}
+    on_plate: dict[str, list[str]] = {name: [] for name in wells_by_plate}
+
+    if distribution is PlateDistribution.SEQUENTIAL:
+        remaining = sorted(groups)
+        for name in on_plate:
+            on_plate[name], remaining = remaining[: room[name]], remaining[room[name] :]
+    else:
+        names = list(on_plate)
+        by_class: dict[str, list[str]] = {}
+        for group in sorted(groups):
+            by_class.setdefault(_class_of(group), []).append(group)
+        for members in by_class.values():
+            members.sort(key=_replicate_of)
+            start = max(range(len(names)), key=lambda i: room[names[i]] - len(on_plate[names[i]]))
+            for offset, group in enumerate(members):
+                for step in range(len(names)):
+                    name = names[(start + offset + step) % len(names)]
+                    if len(on_plate[name]) < room[name]:
+                        on_plate[name].append(group)
+                        break
+
+    assignment = {}
+    for name, members in on_plate.items():
+        for group, well in assign_wells(members, wells_by_plate[name], randomize, seed).items():
+            assignment[group] = (name, well)
+    left_over = len(groups) - len(assignment)
+    if left_over:
+        logger.warning(f"{left_over} samples fit on none of the {n_plates} plates")
+    logger.info(
+        f"{len(assignment)} samples over {n_plates} plates ({distribution.value}): "
+        + ", ".join(f"{name}={len(members)}" for name, members in on_plate.items())
+    )
+    return assignment
+
+
+def per_plate(assignment: dict[str, tuple[str, str]]) -> dict[str, dict[str, str]]:
+    """Split a plate assignment into one samples-and-wells scheme per plate."""
+    schemes: dict[str, dict[str, str]] = {}
+    for group, (plate_name, well) in assignment.items():
+        schemes.setdefault(plate_name, {})[group] = well
+    return dict(sorted(schemes.items(), key=lambda item: int(item[0][1:])))
 
 
 def sample_layout(
