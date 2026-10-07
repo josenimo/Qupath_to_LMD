@@ -236,3 +236,58 @@ def test_each_slide_gets_its_own_xml_with_its_own_calibration_into_shared_wells(
     assert xmls[first.name] != xmls[second.name], (
         "Two slides with different calibration produced the same .xml."
     )
+
+
+def test_the_sample_sheet_adds_each_slide_and_totals_them(two_copies):
+    frames = _pools(two_copies)
+    sample_set = slides.whole_shape_samples(frames, ["single_cells_demo"], _scales(two_copies))
+    sheet = sample_set.sheet().set_index("sample")
+    row = sheet.loc["single_cells_demo"]
+    assert row["shapes"] == row["Single_cells shapes"] + row["Single_cells_2 shapes"] == 2 * 121, (
+        f"Pooling two copies of a 121-cell slide should give 242 shapes in the sample: {row.to_dict()}"
+    )
+    assert row["µm²"] == pytest.approx(row["Single_cells µm²"] + row["Single_cells_2 µm²"])
+
+
+def test_no_area_total_when_a_slide_has_no_scale(two_copies):
+    """A total that silently leaves out a slide would understate the sample."""
+    frames = _pools(two_copies)
+    sample_set = slides.whole_shape_samples(frames, ["single_cells_demo"], {"Single_cells": CELLS_PIXEL_SIZE})
+    assert "µm²" not in sample_set.sheet().columns, (
+        "One slide has no scale, so a total µm² would count only the other slide's tissue."
+    )
+
+
+def test_one_well_per_shape_stays_distinct_across_slides(two_copies):
+    """Without the slide in the name, cell 001 of every slide would share a well."""
+    from qupath_to_lmd import geojson
+
+    names = []
+    for slide in two_copies:
+        exploded = geojson.explode_classes(slide.gdf, ["single_cells_demo"], label=slide.name)
+        names.append(set(exploded.loc[exploded["original_classification_name"] == "single_cells_demo", CLASS_NAME]))
+    assert not (names[0] & names[1]), f"Exploded names collide across slides: {sorted(names[0] & names[1])[:3]}"
+
+
+def test_the_sample_set_route_cuts_exactly_what_the_old_route_cut(cells, calibration):
+    """Every method now ends in `SampleSet.plan`; for one slide it must equal the builder the
+    golden harness checks, or the app would cut differently from its reference."""
+    from qupath_to_lmd.model import plan_from_selection
+
+    gdf, points, _report = cells
+    budgets = [ClassBudget("single_cells_demo", 2, 10)]
+    params = selection.SelectionParams(seed=2)
+    result = selection.select(gdf, budgets, BudgetMode.CELLS, params, CELLS_PIXEL_SIZE)
+    saw = plate.assign_wells(budget.group_keys(budgets), plate.acceptable_wells("384", margins=1))
+    names = list(points)[:3]
+    old, _ = plan_from_selection(
+        gdf=gdf, replicate_of=result.replicate_of, wells=[], samples_and_wells=saw,
+        calibration_names=names, calibration_array=calibration,
+    )
+    pooled = slides.select_across_slides({"A": gdf}, budgets, BudgetMode.CELLS, params, {"A": CELLS_PIXEL_SIZE})
+    new = slides.selected_samples({"A": gdf}, pooled, budgets, BudgetMode.CELLS, {"A": CELLS_PIXEL_SIZE}).plan(
+        "A", saw, names, calibration
+    )
+    assert export.build_collection(new, saw).xml == export.build_collection(old, saw).xml, (
+        "The sample-set route wrote a different .xml from the plan builder the golden harness guards."
+    )

@@ -249,7 +249,8 @@ def run_plates_case(source, replicates=1, per_replicate=1) -> dict[str, str]:
     calibration = {
         read[0].name: (names, qc.triangle_qc(read[0].gdf, read[0].calibration_points, names).calibration_array)
     }
-    cuts = slides.cuts_for_experiment(read, pooled, assignment, calibration, scales, plate="96", session_id="golden")
+    samples = slides.selected_samples(pools, pooled, budgets, budget.BudgetMode.CELLS, scales)
+    cuts = slides.cuts_for_experiment(samples, read, assignment, calibration, plate="96", session_id="golden")
     artefacts = {}
     for cut in cuts:
         artefacts[f"{cut.plate}.xml"] = cut.result.xml

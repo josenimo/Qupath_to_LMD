@@ -93,7 +93,8 @@ def experiment():
     for slide in read:
         names = list(slide.calibration_points)[:3]
         calibration[slide.name] = (names, qc.triangle_qc(slide.gdf, slide.calibration_points, names).calibration_array)
-    cuts = slides.cuts_for_experiment(read, pooled, assignment, calibration, scales, plate="96")
+    samples = slides.selected_samples(pools, pooled, budgets, BudgetMode.CELLS, scales)
+    cuts = slides.cuts_for_experiment(samples, read, assignment, calibration, plate="96")
     return cuts, pooled, assignment
 
 
@@ -142,7 +143,8 @@ def test_a_slide_with_nothing_for_a_plate_gets_no_file():
                      qc.triangle_qc(slide.gdf, slide.calibration_points, list(slide.calibration_points)[:3]).calibration_array)
         for slide in read
     }
-    cuts = slides.cuts_for_experiment(read, pooled, assignment, calibration, scales, plate="96")
+    samples = slides.selected_samples(pools, pooled, budgets, BudgetMode.CELLS, scales)
+    cuts = slides.cuts_for_experiment(samples, read, assignment, calibration, plate="96")
     assert len(cuts) == 2, (
         f"Each class exists on one slide only, so two .xml files cut something; got {len(cuts)}. An "
         "empty file would make the user mount a slide to cut nothing."
