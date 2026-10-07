@@ -1809,3 +1809,48 @@ slack instead.
 shapes give different selections anyway.
 **Alternatives rejected:** a runtime top-up (above); per-replicate amounts in `ClassBudget` so a
 top-up could be uneven across replicates (changes the engine, which 075 keeps unchanged).
+
+## 078 — one page of four stages; every collection method is a module that returns a SampleSet
+**Date:** 2026-10-07 · **Status:** active · **implements 075–076; supersedes the frozen UI of the
+annotations workflow (CLAUDE.md §5), the cell workflow's fragment (051) and its plate-before-
+selection order (045, 049); does round four's reordering**
+**Decision:** the app is four stages in a fixed order — Slides, Samples, Plates, Cut — one module
+each (`ui_slides`, `ui_samples`, `ui_plates`, `ui_cut`). Each hands the next a plain object:
+`SlidesContext`, then `model.SampleSet`, then `PlateLayout`. The three ways of collecting are
+modules registered in `ui_samples.methods()` — `ui_collect_whole`, `ui_collect_select`,
+`ui_collect_regions` — each with `LABEL`, `HELP` and `render(context) -> SampleSet | None`.
+**Why, in Jose's words:** *"three selection workflows … and various inputs and outputs. Best case
+scenario these are interoperable and modular. So that adding more features is simpler."* Before
+this, each workflow owned its own plate step, export step and session keys, so a feature like
+several slides had to be built three times. Now a new input format touches Stage 1 only, a new way
+of choosing tissue is one new module, and a new output touches Stage 4 only. No stage imports
+another stage.
+**The methods are named by what is cut**, Jose's choice: *Whole shapes* (the annotations
+workflow), *Selected shapes* (the cell workflow, which also serves annotations up to an amount,
+because the selection never looked at `objectType`) and *Regions and circles*.
+**The annotations workflow's UI is no longer frozen; its output still is.** Jose agreed to move it
+into the stages. It loses the *Confirm plate layout* button and the two plate-view buttons — the
+plate now updates live, as the other methods' always did — and the custom samples-and-wells upload
+becomes an option of the Plates stage, open to every method (one plate). What it cuts is guarded
+three ways: the golden harness (the old plan builders now delegate to `model.plan_from_groups`,
+which every method uses), `tests/test_slides.py` (the sample-set route writes the same `.xml` as
+the old builder), and `tests/test_app.py`, which drives the real page with `AppTest` and compares
+the downloaded `.xml` and `.csv` with `tools/golden/annotations.*` byte for byte.
+**Selection now runs before the plate, with no fragment.** Samples before Plates is the rule
+(076), so the fragment of 051 had to go for the reason 068 gave for the regions route: a fragment
+reruns only itself and would leave the plate and the cut below it stale. The selection cache
+carries the cost instead.
+**The sidebar holds the experiment at a glance** (*2 slides → 27 samples → 1 plate*) and a
+checklist of the four stages, filled in as each completes — in view however far the page scrolls.
+**A stale download is withdrawn.** The download is stamped with a hash of the assignment, the
+shapes per sample, the method's parameters and the export settings; if any of them changes after
+processing, the button is replaced with a note to process again. Before, a user could change the
+plate and download the previous files.
+**Several slides, as decided in 075–077,** appear only when there are several: tabs per slide for
+calibration and pictures, a class × slide table, the pooling note, the slide strategy, and a scale
+table instead of one input. A class split into one well per shape carries the slide in its name
+(`T-Cell_A_001`) so cells of different slides never share a well.
+**Alternatives rejected:** tabs per stage (hide earlier decisions and still recompute everything);
+keeping the annotations workflow's own frozen UI beside the stages (two plate steps to maintain,
+and no multi-slide pooling for whole shapes); naming methods by input type (one input type —
+annotations — would have sat under two methods).

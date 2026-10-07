@@ -9,6 +9,29 @@ Terms are defined in [GLOSSARY.md](GLOSSARY.md); the reasoning behind each choic
 
 ## Unreleased
 
+### Several slides, several plates, one page
+
+- **Upload several slides at once** — several `.geojson` files, or a `.zip` of them. Each slide
+  keeps its own calibration points and image scale, and gets its own `.xml`.
+- **Shapes of the same class on different slides go into the same well**, so a well can hold more
+  tissue than one slide has. The app says so as soon as you add a second slide, and names any class
+  that is missing from a slide (usually a spelling difference).
+- **Choose where an amount comes from**: in proportion to what each slide holds (the default), an
+  equal share from each, or the slides in an order you set.
+- **More samples than one plate holds?** The app asks for as many plates as you need and spreads
+  the samples so that every plate holds every class — so a difference between plates can never
+  look like a difference between classes. Filling plate 1 first is still an option.
+- **One page, four stages**: Slides → Samples → Plates → Cut. All three ways to collect use the same
+  stages, and the sidebar shows your experiment at a glance.
+- **The download explains itself**: `samples.csv` (what each well gets from each slide),
+  `HOW_TO_CUT.txt` (numbered steps in the order you chose — slide by slide or plate by plate), and
+  every `.xml` named for its slide and plate.
+- The annotations workflow is now **Whole shapes**, and no longer needs a *Confirm* click — the
+  plate updates as you change it. What it cuts is unchanged, byte for byte. Your own
+  samples-and-wells file is now an option of the plate stage.
+- If you change anything after processing, the old download is withdrawn until you process again,
+  so you cannot download files that no longer match the screen.
+
 ### New workflow: cellular neighbourhoods
 
 A third option on the workflow step, for when a single cell is too little tissue but you still
