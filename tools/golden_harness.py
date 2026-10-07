@@ -81,6 +81,14 @@ CASES = {
         "replicates": 2,
         "per_replicate": 15,
     },
+    # several plates: nine samples on six-well plates, balanced so every plate holds every
+    # class. One .xml and one plate map per plate.
+    "two_plates": {
+        "kind": "plates",
+        "source": DEMO / "multiclass_cells.geojson",
+        "replicates": 3,
+        "per_replicate": 2,
+    },
 }
 
 
@@ -224,10 +232,37 @@ def run_slides_case(sources, replicates=1, per_replicate=10, plate_type="384", m
     return artefacts
 
 
+def run_plates_case(source, replicates=1, per_replicate=1) -> dict[str, str]:
+    """Drive one slide onto two balanced plates and return each plate's XML and plate map."""
+    read = slides.read_slides([str(source)])
+    pools = {slide.name: slide.gdf for slide in read}
+    scales = dict.fromkeys(pools)
+    classes = sorted(set(read[0].gdf[CLASS_NAME]))
+    budgets = [budget.ClassBudget(name, replicates, per_replicate) for name in classes]
+    pooled = slides.select_across_slides(
+        pools, budgets, budget.BudgetMode.CELLS, selection.SelectionParams(), scales
+    )
+    wells = plate.acceptable_wells(plate="96", margins=3, step_col=2)
+    groups = budget.group_keys(budgets)
+    assignment = plate.assign_to_plates(groups, wells, plate.plates_needed(len(groups), len(wells)))
+    names = list(read[0].calibration_points)[:3]
+    calibration = {
+        read[0].name: (names, qc.triangle_qc(read[0].gdf, read[0].calibration_points, names).calibration_array)
+    }
+    cuts = slides.cuts_for_experiment(read, pooled, assignment, calibration, scales, plate="96", session_id="golden")
+    artefacts = {}
+    for cut in cuts:
+        artefacts[f"{cut.plate}.xml"] = cut.result.xml
+        artefacts[f"{cut.plate}.csv"] = cut.result.csv
+    return artefacts
+
+
 def _run(kind: str = "annotations", **kwargs) -> dict[str, str]:
     """Dispatch a case to the pipeline it exercises; returns artefacts by file suffix."""
     if kind == "slides":
         return run_slides_case(**kwargs)
+    if kind == "plates":
+        return run_plates_case(**kwargs)
     if kind == "regions":
         xml, csv = run_regions_case(**kwargs)
     elif kind == "packing":
