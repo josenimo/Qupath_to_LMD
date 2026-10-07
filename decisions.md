@@ -1724,3 +1724,70 @@ since that is what dominates the picture.
 The calibration triangle is gone from both region pictures. It served calibration QC, which step
 3 already reports as a percentage, and over a dense tissue map it is noise. It stays on step 4's
 input drawing, where distortion risk is the thing being judged.
+
+## 075 — several slides into one well: pooled by class name, one engine run per slide
+**Date:** 2026-10-07 · **Status:** planned · **supersedes 061 as the answer to 020** (061 stays,
+for slides that go into different wells)
+**Decision:** the app accepts several slides in one session — several `.geojson` uploads or one
+`.zip` of them — and pools shapes of the **same class name** from every slide into the same
+samples. The amount a sample asks for is split between slides by a **slide strategy**: *priority
+order* (fill from the first slide, top up from the next), *proportional* (each slide supplies a
+share in proportion to what it holds; **the default**), or *equal share* (capped by what a slide
+holds). In every strategy a slide that cannot supply its share passes the shortfall to the next.
+**The pooling assumption is told to the user.** Pooling by class name is only right when the
+slides are the same biological sample — serial sections of one block, classified with the same
+classes. Jose confirmed that is the case this serves. The app says so once, under Samples, when a
+second slide is added, and says how to keep slides apart (distinct class names, e.g.
+`P1_Tumor`). A class present on only some slides is named, because that is usually a spelling
+difference rather than biology.
+**Why the selection and packing engines run once per slide, unchanged:** every slide's pixel
+coordinates start at (0, 0). Stacking slides into one frame would make the spread grid, the
+adjacency graph, the Voronoi projection and the circle collision grid treat shapes on different
+slides as neighbours. Running the existing engines per slide keeps all of that correct and keeps
+Jose's requirement that the sampling strategy does not vary with the number of slides. Only the
+bookkeeping — how much each slide is asked for, and what it achieved — spans slides.
+**Why one `.xml` per slide:** calibration points belong to one image, and a py-lmd `Collection`
+takes one triangle. Each slide also keeps its own scale, and areas are converted per slide before
+they are summed.
+**Why multi-upload plus a QuPath script, not the project folder:** a `.qpproj` folder holds its
+shapes in `data/<n>/data.qpdata`, which is Java-serialised (`file` reports "Java serialization
+data, version 5"). Only QuPath can read it — from Python that means paquo plus a QuPath install
+and a JVM, which Community Cloud cannot run and which would be a second, local-only code path.
+A *Run for project* Groovy script that exports one GeoJSON per image gives the same "whole project
+at once" experience and leaves GeoJSON as the only input contract (CLAUDE.md §4).
+**The annotations workflow is not extended** — it is frozen. Annotations up to an amount already
+work through the cell workflow, because `selection.select` does not filter on `objectType`.
+**Alternatives rejected:** reading `.qpproj` via paquo (above); balancing slides within each
+replicate (not what a same-sample experiment needs); per-slide amounts typed by hand (three
+strategies cover the cases Jose named without a table of numbers per class per slide); one
+combined coordinate frame with slides offset from each other (every engine would then need to
+know the offset is not tissue).
+
+## 076 — several plates, balanced by default; the user chooses the cutting order
+**Date:** 2026-10-07 · **Status:** planned
+**Decision:** an experiment may need more than one plate. The app computes the minimum number of
+plates from the usable wells, lets the user raise it, and distributes samples **balanced across
+plates** by default: each class's replicates are dealt round-robin over the plates, so every plate
+holds every class where the replicate count allows. *Sequential* fill — plate 1 full, then plate 2
+— is the alternative. All plates share one plate type, margin and spacing. **Start at well**
+applies to the first plate.
+**Why balanced is the default:** `plate.assign_wells` sorts groups, so sequential overflow puts
+`Immune_r1…r3` on plate 1 and `Tumor_r1…r3` on plate 2. Plate is then confounded with class, and a
+plate or batch effect downstream reads as biology. Balanced is the design a proteomics batch
+correction can work with.
+**Why one `.xml` per slide × plate pair:** py-lmd writes a well as a bare `<CapID>` (`lmd/lib.py`)
+with no plate identity, so one XML can only target one plate. Two slides on two plates is four
+XMLs, each named for both, so it cannot be loaded against the wrong pair.
+**Why the cutting order is the user's choice:** slide by slide (calibrate a slide once, swap
+plates) and plate by plate (mount a plate once, recalibrate slides) trade different handling
+steps, and which is cheaper depends on the lab. The folder layout of the download and
+`HOW_TO_CUT.txt` follow the choice.
+**How the UI stays legible**, because Jose named that as the risk: four stages in a fixed order
+(Slides → Samples → Plates → Cut); slide and plate controls appear only when there are two or
+more of them; one live experiment-at-a-glance line; the sample sheet as the one central table;
+at most one new control per stage. A single-slide, single-plate user sees nothing new, and the
+seven existing golden cases must pass without re-blessing. `ROADMAP.md` round five has the
+detail.
+**Alternatives rejected:** sequential as the default (the confound above); the user assigning
+plates per class (a choice most users should not have to make, and still possible through the
+editable sample sheet); mixed plate types in one experiment (not asked for).
