@@ -56,6 +56,8 @@ src/qupath_to_lmd/
                                   packable_area, class_generator, smoothing_loss
   plot.py                         plot_shapes — class overview, selection preview, QC image;
                                   plot_regions_and_circles — the regions feedback picture
+  slides.py                       Slide, read_slides, SlideStrategy, split_budgets,
+                                  select_across_slides, plans_for_slides
   export.py                       build_collection, build_bundle, PathOrder,
                                   order_for_cutting, path_stats, ORIENTATION_TRANSFORM
   extras.py                       QuPath classes.json generation
@@ -70,7 +72,7 @@ src/qupath_to_lmd/
   __init__.py                     empty
 tools/
   golden_harness.py               byte-equality regression gate
-  golden/                         14 reference artefacts, 7 cases
+  golden/                         17 reference artefacts, 8 cases
 demo_Qupath_project/              real QuPath project used as test fixture
   TD_01_verysmall_mIF.geojson     9 features: 6 annotation Polygons + 3 calibration Points
   Single_cells.geojson            131 features: 121 cells + 7 annotations + 3 Points
@@ -773,6 +775,32 @@ the worst of this: on the real export the loss is 6% of the collected area. `smo
 computes it, and step 8 warns above 5% and states it as a caption below that. The remedies
 offered are the real ones — a larger smallest circle, or a lower smoothing tolerance.
 
+## Several slides (library only, round five PR 2)
+
+`slides.py` — no UI yet. Shapes of the same class on different slides pool into the same samples
+(`decisions.md` 075).
+
+- `read_slides(sources)` reads paths or uploads, expanding a `.zip` in memory (skips non-GeoJSON
+  entries and macOS `__MACOSX`/`._` twins; refuses more than 1 GB uncompressed). A slide's name is
+  its file stem, made unique with `_2`, `_3`.
+- `split_budgets` splits each class's **per-replicate** amount between slides, so every replicate
+  draws on the slides the same way. Priority fills in the given order; proportional follows what
+  each slide holds; equal share water-fills. A slide is never asked for more than it holds while
+  another still has tissue; when the slides together hold too little, the remainder is spread in
+  proportion to holdings, so every slide is asked for at least all it has. Shape counts split into
+  whole shapes (largest remainder). **With one slide every strategy returns the budget unchanged.**
+- `select_across_slides` runs the unchanged `selection.select` once per slide, with the same
+  params and seed, on that slide's pool and at its own scale. A test asserts each slide's result
+  equals running the engine on that slide alone, so slides cannot influence each other.
+- **No top-up after the run** (`decisions.md` 077): the split happens once, from availability, and
+  a slide that delivers less than its share leaves the sample short and reported. For shapes that
+  is exact up to the last shape; for circles, whose capacity is an estimate, it is revisited in
+  the regions PR.
+- `plans_for_slides` builds one `CollectionPlan` per slide from one shared samples-and-wells
+  scheme, each with its own calibration — `Tumor_r2` lands in the same well from every slide.
+- `PooledSelection.by_sample()` is the sample sheet's core: per class and replicate, what each
+  slide gave, the total and the request.
+
 ## Session state keys
 
 Initialised in the block at the top of `streamlit_app.py`. Any new key belongs here too.
@@ -1002,7 +1030,7 @@ yields) with these figures and instructions for running locally (`decisions.md` 
 
 ## Test suite
 
-`tests/`, run with `uv run pytest` — 231 tests in about 7 seconds. `-m "not slow"` skips the
+`tests/`, run with `uv run pytest` — 264 tests in about 7 seconds. `-m "not slow"` skips the
 golden gate for a fast loop. CI runs ruff, the suite and the harness on every push and PR
 (`.github/workflows/ci.yml`).
 
@@ -1029,19 +1057,20 @@ golden gate for a fast loop. CI runs ruff, the suite and the harness on every pu
 
 ## Regression harness
 
-`tools/golden_harness.py`, with the reference output in `tools/golden/` (14 files, ~255 KB).
+`tools/golden_harness.py`, with the reference output in `tools/golden/` (17 files).
 
 ```
 uv run python tools/golden_harness.py check      # compare against the golden files
 uv run python tools/golden_harness.py capture    # re-bless, only when output should change
 ```
 
-Seven cases, each covering a path where a change could silently move coordinates:
+Eight cases, each covering a path where a change could silently move coordinates:
 `annotations` (ordinary mini-bulk), `cells` (128 shapes with measurements),
 `cells_exploded` (one well per shape), `annotations_96` (different plate geometry),
 `multiclass_cells` (real QuPath 0.7.0 export shape), `regions` (Voronoi projection and merge,
 where every coordinate is computed rather than read from the file), `packing` (circles placed by
-a seeded random walk). Each produces an XML and a CSV, so 14 artefacts.
+a seeded random walk), `two_slides` (one `.xml` per slide into shared wells). Each produces an XML
+and a CSV, except `two_slides`, which produces one XML per slide — 17 artefacts.
 
 - `capture` rewrites **every** case, not only a new one, so after adding a case check
   `git diff tools/golden/` shows nothing but the new files before committing.
