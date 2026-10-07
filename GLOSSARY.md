@@ -71,8 +71,17 @@ class a neighbouring cut belongs to.
 drawn from across the whole tissue and interleaved with each other, so they are statistical
 repeats rather than samples of different regions.
 
+**sample** — what one well receives: one group as the experiment sees it, e.g. `Tumor_r2`.
+With several slides a sample is filled from all of them — shapes of the same class are pooled by
+class name, which assumes the slides are the same biological sample. *Group* stays the word in
+code; *sample* is the word in the interface and in the samples-and-wells scheme.
+
 **well** — a position on the plate, written row-then-column with no padding: `C3`, `B12`. A 384
 plate is rows A–P by columns 1–24; a 96 plate is A–H by 1–12.
+
+**plate** — the 96- or 384-well plate the LMD collects into. An experiment with more samples
+than one plate's usable wells uses several, numbered `P1`, `P2`, …; each `.xml` targets one plate,
+because the LMD's file names a well but not a plate.
 
 **margin** — how many wells to leave unused around the edge of the plate. It exists because the
 LMD7 collects unreliably into the outermost wells of a 384 plate.
@@ -86,6 +95,10 @@ one, and everything downstream — QC, smoothing, cut order, export — reads on
 ---
 
 ## Geometry and scale
+
+**slide** — one QuPath image and its export: its own shapes, its own calibration points and its
+own pixel size. Each slide gets its own `.xml`. The interface says *slide*, never *file*, *image*
+or *section*, even where the upload is technically a file.
 
 **calibration point** — one of three named point annotations that let the LMD map image
 coordinates onto its stage. Three are required, they must not be collinear, and they should sit
@@ -118,3 +131,6 @@ adjacent cells, so a strict intersection test finds almost none of the real neig
 | well | — | well / cap |
 | collection | — | Collection |
 | calibration point | point annotation | calibration point |
+| slide | image (in a project) | — |
+| sample | — | — |
+| plate | — | — |
