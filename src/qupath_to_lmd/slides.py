@@ -23,9 +23,10 @@ import numpy
 import pandas
 from loguru import logger
 
-from qupath_to_lmd import geojson, selection, stats
+from qupath_to_lmd import export, geojson, selection, stats
 from qupath_to_lmd.budget import BudgetMode, ClassBudget
 from qupath_to_lmd.model import CLASS_NAME, CollectionPlan, plan_from_selection
+from qupath_to_lmd.plate import per_plate
 
 SLIDE = "slide"
 
@@ -320,3 +321,39 @@ def plans_for_slides(
         )
         plans[slide.name] = plan
     return plans
+
+
+def cuts_for_experiment(
+    slides: list[Slide],
+    pooled: PooledSelection,
+    assignment: dict[str, tuple[str, str]],
+    calibration: dict[str, tuple[list[str], numpy.ndarray]],
+    pixel_sizes: Mapping[str, float | None],
+    *,
+    plate: str = "384",
+    simplify_tolerance: float = export.DEFAULT_SIMPLIFY_TOLERANCE,
+    path_order: export.PathOrder = export.DEFAULT_PATH_ORDER,
+    session_id: str | None = None,
+    params: dict | None = None,
+) -> list[export.Cut]:
+    """Build every `.xml` of an experiment: one per slide and plate that has something to cut.
+
+    A slide that sends nothing to a plate gets no file for it, so the instructions never ask the
+    user to mount a slide only to cut nothing.
+    """
+    cuts = []
+    for plate_name, scheme in per_plate(assignment).items():
+        plans = plans_for_slides(
+            slides, pooled, scheme, calibration, pixel_sizes,
+            session_id=session_id, params={**(params or {}), "plate": plate_name},
+        )
+        for slide_name, slide_plan in plans.items():
+            if slide_plan.selected.empty:
+                continue
+            result = export.build_collection(
+                slide_plan, samples_and_wells=scheme, simplify_tolerance=simplify_tolerance,
+                plate=plate, path_order=path_order,
+            )
+            cuts.append(export.Cut(slide_name, plate_name, slide_plan, result))
+    logger.info(f"{len(cuts)} cuts: {[(cut.slide, cut.plate) for cut in cuts]}")
+    return cuts

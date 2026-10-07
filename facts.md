@@ -44,7 +44,8 @@ src/qupath_to_lmd/
                                   rewrite_classification, sanitize_for_qupath,
                                   synthesize_qupath_columns, classification_values,
                                   implied_pixel_size, drop_unused_columns
-  plate.py                        plate shapes, acceptable_wells, layouts, saw parse/convert
+  plate.py                        plate shapes, acceptable_wells, layouts, saw parse/convert,
+                                  PlateDistribution, plates_needed, assign_to_plates, per_plate
   qc.py                           triangle_qc, validate_saw, compare_pixel_size (reports)
   stats.py                        class_statistics, for_display, reference_pixel_sizes
   budget.py                       BudgetMode, ClassBudget, feasibility, total_groups
@@ -57,8 +58,10 @@ src/qupath_to_lmd/
   plot.py                         plot_shapes — class overview, selection preview, QC image;
                                   plot_regions_and_circles — the regions feedback picture
   slides.py                       Slide, read_slides, SlideStrategy, split_budgets,
-                                  select_across_slides, plans_for_slides
-  export.py                       build_collection, build_bundle, PathOrder,
+                                  select_across_slides, plans_for_slides,
+                                  cuts_for_experiment
+  export.py                       build_collection, build_bundle, PathOrder, CutOrder, Cut,
+                                  cutting_instructions, build_experiment_bundle,
                                   order_for_cutting, path_stats, ORIENTATION_TRANSFORM
   extras.py                       QuPath classes.json generation
   === UI layer: Streamlit, owns session_state ===
@@ -72,7 +75,7 @@ src/qupath_to_lmd/
   __init__.py                     empty
 tools/
   golden_harness.py               byte-equality regression gate
-  golden/                         17 reference artefacts, 8 cases
+  golden/                         21 reference artefacts, 9 cases
 demo_Qupath_project/              real QuPath project used as test fixture
   TD_01_verysmall_mIF.geojson     9 features: 6 annotation Polygons + 3 calibration Points
   Single_cells.geojson            131 features: 121 cells + 7 annotations + 3 Points
@@ -801,6 +804,30 @@ offered are the real ones — a larger smallest circle, or a lower smoothing tol
 - `PooledSelection.by_sample()` is the sample sheet's core: per class and replicate, what each
   slide gave, the total and the request.
 
+## Several plates (library only, round five PR 3)
+
+- `plate.assign_to_plates(groups, wells, n_plates, distribution, randomize, seed, start_well)`
+  returns `{group: (plate, well)}`, plates named `P1`, `P2`, …. **One plate returns exactly
+  `assign_wells`**, tested with and without randomizing and with a start well, so single-plate
+  collections land where they always have. `start_well` applies to P1 only.
+- **BALANCED** (default, `decisions.md` 076) deals each class's replicates round-robin over the
+  plates, each class starting on the plate with the most room. Every plate holds every class when
+  replicates ≥ plates. **SEQUENTIAL** fills P1 with the first sorted groups, then P2. Within a plate
+  wells come from `assign_wells`. Groups that fit nowhere are absent from the result for the caller
+  to name.
+- `plates_needed(n_samples, usable_wells, first_plate_wells)` — the first plate may be short when
+  it starts part-way through.
+- `slides.cuts_for_experiment` builds one `export.Cut` per slide × plate pair **that has shapes**:
+  a slide that sends nothing to a plate gets no file, so the instructions never send the user to
+  mount a slide and cut nothing.
+- `export.build_experiment_bundle` zips `samples.csv` (from `PooledSelection.by_sample()`), one
+  `plate_Pn.csv` each, `samples_and_wells.json` keyed by plate, `provenance.json` (experiment plus
+  one entry per cut), `HOW_TO_CUT.txt`, the XMLs and their PNGs, and one
+  `qupath/<slide>_processed.geojson` per slide. `CutOrder.BY_SLIDE` files XMLs as
+  `slide_<S>/<S>__<P>.xml`, `BY_PLATE` as `plate_<P>/<P>__<S>.xml` — both names carry slide and
+  plate. `HOW_TO_CUT.txt` is numbered steps in that order, naming the calibration points per slide.
+- One slide on one plate still goes through `build_bundle`, unchanged.
+
 ## Session state keys
 
 Initialised in the block at the top of `streamlit_app.py`. Any new key belongs here too.
@@ -1030,7 +1057,7 @@ yields) with these figures and instructions for running locally (`decisions.md` 
 
 ## Test suite
 
-`tests/`, run with `uv run pytest` — 264 tests in about 7 seconds. `-m "not slow"` skips the
+`tests/`, run with `uv run pytest` — 282 tests in about 7 seconds. `-m "not slow"` skips the
 golden gate for a fast loop. CI runs ruff, the suite and the harness on every push and PR
 (`.github/workflows/ci.yml`).
 
@@ -1057,20 +1084,21 @@ golden gate for a fast loop. CI runs ruff, the suite and the harness on every pu
 
 ## Regression harness
 
-`tools/golden_harness.py`, with the reference output in `tools/golden/` (17 files).
+`tools/golden_harness.py`, with the reference output in `tools/golden/` (21 files).
 
 ```
 uv run python tools/golden_harness.py check      # compare against the golden files
 uv run python tools/golden_harness.py capture    # re-bless, only when output should change
 ```
 
-Eight cases, each covering a path where a change could silently move coordinates:
+Nine cases, each covering a path where a change could silently move coordinates:
 `annotations` (ordinary mini-bulk), `cells` (128 shapes with measurements),
 `cells_exploded` (one well per shape), `annotations_96` (different plate geometry),
 `multiclass_cells` (real QuPath 0.7.0 export shape), `regions` (Voronoi projection and merge,
 where every coordinate is computed rather than read from the file), `packing` (circles placed by
-a seeded random walk), `two_slides` (one `.xml` per slide into shared wells). Each produces an XML
-and a CSV, except `two_slides`, which produces one XML per slide — 17 artefacts.
+a seeded random walk), `two_slides` (one `.xml` per slide into shared wells), `two_plates` (nine samples balanced over two
+six-well plates). Each produces an XML and a CSV, except `two_slides`, which produces one XML per
+slide, and `two_plates`, one XML and one plate map per plate — 21 artefacts.
 
 - `capture` rewrites **every** case, not only a new one, so after adding a case check
   `git diff tools/golden/` shows nothing but the new files before committing.
