@@ -1791,3 +1791,21 @@ detail.
 **Alternatives rejected:** sequential as the default (the confound above); the user assigning
 plates per class (a choice most users should not have to make, and still possible through the
 editable sample sheet); mixed plate types in one experiment (not asked for).
+
+## 077 — the split between slides is decided once, before selecting
+**Date:** 2026-10-07 · **Status:** active · **refines 075**
+**Decision:** `slides.split_budgets` decides each slide's share from what each slide holds, and
+`select_across_slides` runs the selection once per slide on that share. There is no second pass
+that tops up a short sample from another slide after the run. Every slide uses the same selection
+params and seed.
+**Why:** a top-up pass would call the engine again on a slide's leftover shapes, and that second
+call cannot see the shapes the first call took — so the adjacency preference and the neighbour
+count would both be wrong across the two calls. For shapes the availability is exact (counts and
+areas of collectable shapes), so a split capped by it is delivered to within the last shape and a
+top-up buys nothing. Circles are different: their capacity is an estimate, slightly optimistic, so
+a slide can fall short of its share. That is for the regions PR, where the packer can be asked for
+slack instead.
+**Same seed on every slide:** one number to report in a methods section. Slides with different
+shapes give different selections anyway.
+**Alternatives rejected:** a runtime top-up (above); per-replicate amounts in `ClassBudget` so a
+top-up could be uneven across replicates (changes the engine, which 075 keeps unchanged).
