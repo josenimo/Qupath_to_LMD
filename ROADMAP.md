@@ -689,8 +689,7 @@ starts, so the layout can be corrected while it is cheap to change.
 
 **Overlap with round four.** Round four moves the cell workflow's plate below its collection step
 and gives it the regions-style per-class table. PR 4 needs the first of those — Samples before
-Plates is rule 1 above — so PR 4 either lands after round four or absorbs that part of it. Which,
-is Jose's call when PR 3 is merged.
+Plates is rule 1 above — so, per Jose, PR 4 is done as part of round four rather than after it.
 
 **Not in this round:** the annotations workflow (frozen; it keeps one slide and one plate, and
 points to the selection workflow for amounts across slides); mixed plate types in one experiment;
