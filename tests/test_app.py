@@ -149,3 +149,21 @@ def test_extras_are_a_page_of_their_own_not_the_sidebar(monkeypatch):
     app.switch_page("app_pages/extras.py").run()
     assert not app.exception, f"The Extras page raised: {[e.value for e in app.exception]}"
     assert any("categoricals" in block.value for block in app.markdown), "The Extras page shows no classes generator."
+
+
+def test_a_look_at_the_tube_holder_does_not_reset_the_plate_margin(monkeypatch):
+    """Margin and spacing are hidden for holders, and Streamlit forgets a hidden widget's value."""
+    app = _start(monkeypatch, ["TD_01_verysmall_mIF.geojson"])
+    _confirm_calibration(app)
+    app.number_input(key="plate_margin").set_value(2).run()
+    app.number_input(key="plate_step_col").set_value(2).run()
+    app.selectbox(key="plate_type").set_value("tubes").run()
+    app.selectbox(key="plate_type").set_value("384").run()
+    assert not app.exception, f"The app raised: {[e.value for e in app.exception]}"
+    assert app.number_input(key="plate_margin").value == 2 and app.number_input(key="plate_step_col").value == 2, (
+        "Switching to the tube holder and back reset the plate margin or spacing, so the layout "
+        "silently uses the edge wells the user had chosen to avoid."
+    )
+    assert not [w for w in app.warning if "Session State" in str(w.value)], (
+        f"Streamlit warned about the restored values: {[w.value for w in app.warning]}"
+    )

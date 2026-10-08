@@ -653,3 +653,27 @@ def test_the_tube_caption_counts_tubes_on_the_named_holder(fake_streamlit, monke
     assert "start at **B**" in caption, (
         f"The caption should name tube B as the next free one: {caption!r}"
     )
+
+
+def test_the_cutting_runs_count_the_collectors_that_receive_samples(fake_streamlit, monkeypatch):
+    """Sequential filling of four holders with five samples uses two; the warning must say two."""
+    settings = _settings_for("tubes", monkeypatch)
+    samples = [f"Tumor_r{n}" for n in range(1, 6)]
+    assignment = plate.assign_to_plates(
+        samples, settings["usable"], 4, plate.PlateDistribution.SEQUENTIAL, plate="tubes"
+    )
+    ui_plates._capacity_report(samples, settings, 4, assignment)
+    warnings = fake_streamlit.shown("warnings")
+    assert "2 separate cutting runs" in warnings and "4 separate" not in warnings, (
+        "Five samples filled two of four tube holders, but the warning counted the number box. "
+        f"The download has two .xml files, so the screen disagrees with it: {warnings}"
+    )
+
+
+def test_a_custom_file_on_one_holder_does_not_warn_about_several_runs(fake_streamlit, monkeypatch):
+    settings = _settings_for("tubes", monkeypatch)
+    assignment = {"Tumor_r1": ("TubeHolder1", "A"), "Tumor_r2": ("TubeHolder1", "B")}
+    ui_plates._capacity_report(["Tumor_r1", "Tumor_r2"], settings, 4, assignment)
+    assert "separate cutting runs" not in fake_streamlit.shown("warnings"), (
+        "An uploaded file puts everything on one tube holder, yet the warning speaks of several runs."
+    )

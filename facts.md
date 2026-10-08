@@ -235,8 +235,9 @@ The reading and QC below is unchanged; it now runs once per uploaded file.
    `sample_layout`/`assign_wells` layout. No *Confirm* button any more, for any method: the plate
    updates live (078). `ui_shared.plate_preview` is the only collector renderer (045). The widget
    `plate_type` holds a key of `plate.COLLECTORS` — `384`, `96`, `tubes`, `strip` — shown by its
-   label. Margin and spacing are hidden for the tube and strip holders (081); with more than one
-   collector a warning says how many separate cutting runs that is, and the number of collectors
+   label. Margin and spacing are hidden for the tube and strip holders (081), and their widget
+   values are written back while hidden so a plate gets them again (083); with more than one
+   collector receiving samples a warning says how many separate cutting runs that is, and the number of collectors
    can go past 50 when the samples need it (four tubes a holder reaches 50 at 200 samples).
 2.3 **Custom samples-and-wells upload** — an expander in the Collector stage, for every method;
    overrides the generated layout. `plate.assignment_from_scheme` reads both shapes the app

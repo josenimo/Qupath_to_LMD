@@ -56,6 +56,9 @@ class PlateLayout:
         return recorded
 
 
+PLATE_ONLY_KEYS = ("plate_margin", "plate_step_row", "plate_step_col")
+
+
 def settings_step() -> dict:
     """Collector, margin, spacing, start position and randomizing."""
     collector_col, margin_col, step_row_col, step_col_col, start_col, random_col = st.columns(6)
@@ -69,6 +72,13 @@ def settings_step() -> dict:
         )
     chosen = plate.collector(plate_type)
     margin, step_row, step_col = 0, 1, 1
+    if not chosen.spacing:
+        # Streamlit drops a keyed widget's value on any run that does not draw it, so a glance
+        # at the tube holder would reset a plate's margin 2 to the default 1. Writing the values
+        # back keeps them for when a plate is chosen again (`decisions.md` 083).
+        for key in PLATE_ONLY_KEYS:
+            if key in st.session_state:
+                st.session_state[key] = st.session_state[key]
     # Hidden rather than disabled on the holders: a margin means nothing on four tubes, and a
     # greyed-out control asks why it cannot be used (`decisions.md` 081).
     if chosen.spacing:
@@ -249,9 +259,13 @@ def _capacity_report(
             else f"**{n_plates} {chosen.noun}s** offer **{offered}**."
         )
     )
-    if n_plates > 1:
+    # Counted from where the samples went, not from the number box: sequential filling or an
+    # uploaded file can leave collectors empty, and an empty one gets no .xml.
+    used = len(plate.per_plate(assignment))
+    if used > 1:
         st.warning(
-            f"That is **{n_plates} separate cutting runs**, one `.xml` each, with the {chosen.noun} "
+            f"The samples go onto {used} {chosen.noun}s. That is **{used} separate cutting runs** "
+            f"for each slide, one `.xml` per slide and {chosen.noun}, with the {chosen.noun} "
             "changed between them."
         )
     unplaced = [sample for sample in samples if sample not in assignment]

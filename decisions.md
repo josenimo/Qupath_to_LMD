@@ -1941,3 +1941,21 @@ Jose's notes after clicking through 078.
   information is.
 - Five ring colours, cycling after that. Most designs collect fewer replicates, and a sixth colour
   outside tab20's hues and apart from these five could not be found.
+
+## 083 — what hiding the plate controls costs, and the rest of what the rename touches
+**Date:** 2026-10-08 · **Status:** active · **refines 081**
+- **Hidden controls lose their values in Streamlit.** A keyed widget that is not drawn in a run
+  has its state dropped, so with margin and spacing hidden for the holders (081), a look at the
+  tube holder reset a plate's margin 2 to 1 and its spacing to 1 — the layout would then use the
+  edge wells the user chose to avoid, with nothing to say so. While a holder is chosen,
+  `ui_plates.settings_step` writes `plate_margin`, `plate_step_row` and `plate_step_col` back to
+  session state each run (`PLATE_ONLY_KEYS`), which keeps them. Found in the branch review;
+  `tests/test_app.py` switches to tubes and back and checks both values survive.
+- **The cutting-runs warning counts collectors that receive samples**, not the number box:
+  sequential filling or an uploaded file can leave collectors empty, and an empty one gets no
+  `.xml`. With several slides the runs are per slide, so the warning says so.
+- **The rename to `Plate1` reaches more than file names** in a download of several plates: the
+  `plate` column of `samples.csv`, the wording of `COLLECTION_PLAN.txt` ("Load Plate1." instead of
+  "Put plate P1 in the collector."), and `provenance.json` (`plate: Plate1` per cut, plus
+  `experiment.collector`). A script that matched `P1` in `samples.csv` needs updating. The single
+  slide, single plate download is unchanged.
