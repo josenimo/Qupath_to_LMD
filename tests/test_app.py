@@ -93,7 +93,7 @@ def test_two_slides_on_two_plates_give_four_cutting_files(monkeypatch):
     files = _contents(app)
     xmls = sorted(name for name in files if name.endswith(".xml"))
     assert len(xmls) == 4, f"Two slides on two plates should give four .xml files, got {xmls}."
-    for expected in ("samples.csv", "plate_Plate1.csv", "plate_Plate2.csv", "COLLECTION_PLAN.txt"):
+    for expected in ("samples.csv", "Plate1.csv", "Plate2.csv", "COLLECTION_PLAN.txt"):
         assert expected in files, f"{expected} is missing from the experiment download."
 
 

@@ -4,11 +4,20 @@ A tube holder or a strip holder plays the part of a plate. What goes wrong when 
 always the same at the microscope: tissue sent to a cap that does not exist, or to the wrong one.
 """
 
+import io
 import string
+import zipfile
+from pathlib import Path
+from types import SimpleNamespace
+from unittest import mock
 
+import pandas
 import pytest
 
-from qupath_to_lmd import plate, qc
+from qupath_to_lmd import export, geojson, plate, qc
+from qupath_to_lmd.model import CLASS_NAME, plan_from_class_wells
+
+TD_01 = Path(__file__).resolve().parent.parent / "demo_Qupath_project" / "TD_01_verysmall_mIF.geojson"
 
 
 def _old_acceptable_wells(plate_type, margins=0, step_row=1, step_col=1):
@@ -187,4 +196,74 @@ def test_a_file_for_another_collector_is_refused_by_name(parsed, chosen, names):
     assert plate.collector(chosen).label in message and names in message, (
         f"Refused, but the message {message!r} does not say which collector the file is for and "
         "which is chosen, so the user cannot tell what to change."
+    )
+
+
+def _td01_into(plate_type):
+    """TD_01's four classes into the first positions of a collector, the way the harness does it."""
+    gdf, calibration_points, _report = geojson.read_and_qc(str(TD_01))
+    names = list(calibration_points)[:3]
+    triangle = qc.triangle_qc(gdf, calibration_points, names)
+    scheme = dict(zip(sorted(set(gdf[CLASS_NAME])), plate.acceptable_wells(plate_type, margins=1), strict=False))
+    plan = plan_from_class_wells(
+        gdf=gdf, samples_and_wells=scheme, calibration_names=names,
+        calibration_array=triangle.calibration_array, source_file=TD_01.name, session_id="test",
+    )
+    return plan, scheme, export.build_collection(plan, samples_and_wells=scheme, plate=plate_type)
+
+
+def test_a_tube_collection_writes_letter_cap_ids():
+    _plan, scheme, result = _td01_into("tubes")
+    assert set(scheme.values()) == {"A", "B"}, f"TD_01's two classes should take tubes A and B: {scheme}"
+    for class_name, tube in scheme.items():
+        assert f"<CapID>{tube}</CapID>" in result.xml, (
+            f"Tube {tube} is missing from the .xml, so {class_name} would not be collected."
+        )
+    assert "<CapID>A1</CapID>" not in result.xml, (
+        "The tube holder .xml names a plate well; the LMD has no such cap on a tube holder."
+    )
+
+
+def test_a_tube_bundle_names_its_csv_for_tubes():
+    plan, scheme, result = _td01_into("tubes")
+    names = zipfile.ZipFile(export.build_bundle(plan, result, scheme, plate="tubes")).namelist()
+    assert "TD_01_verysmall_mIF_tubes.csv" in names, f"No tube map in the download: {names}"
+    plan, scheme, result = _td01_into("384")
+    names = zipfile.ZipFile(export.build_bundle(plan, result, scheme, plate="384")).namelist()
+    assert "TD_01_verysmall_mIF_384_wellplate.csv" in names, (
+        f"The plate map of a single-plate download was renamed: {names}"
+    )
+
+
+def _cut(slide, holder, n_shapes=3):
+    plan = SimpleNamespace(calibration_names=["c1", "c2", "c3"], wells_used=["A", "C"])
+    return export.Cut(slide, holder, plan, SimpleNamespace(n_shapes=n_shapes))
+
+
+def test_experiment_files_are_named_after_the_collector():
+    cut = _cut("S1", "TubeHolder2")
+    assert cut.path(export.CutOrder.BY_PLATE) == "TubeHolder2/TubeHolder2__S1.xml"
+    assert cut.path(export.CutOrder.BY_SLIDE) == "slide_S1/S1__TubeHolder2.xml"
+    for order in export.CutOrder:
+        text = export.cutting_instructions([_cut("S1", "TubeHolder1"), cut], order, plate="tubes")
+        assert "Load TubeHolder2" in text and "tubes A–D" in text and "2 tube holders" in text, (
+            f"COLLECTION_PLAN.txt does not tell the user which tube holder to load:\n{text}"
+        )
+        assert "plate" not in text, f"The tube holder instructions talk about a plate:\n{text}"
+
+
+def test_an_experiment_bundle_names_its_maps_after_the_collector(tmp_path):
+    image = tmp_path / "c.png"
+    image.write_bytes(b"")
+    cuts = [export.Cut("S1", "Strip1", SimpleNamespace(
+        calibration_names=["a", "b", "c"], wells_used=["A"], provenance=lambda: {},
+        shapes=None,
+    ), SimpleNamespace(n_shapes=1, xml="<x/>", image_path=str(image)))]
+    with mock.patch.object(export, "sanitize_for_qupath", return_value=mock.MagicMock()):
+        buffer = export.build_experiment_bundle(
+            cuts, pandas.DataFrame({"sample": ["T"]}), {"Strip1": {"T": "A"}}, plate="strip",
+        )
+    names = zipfile.ZipFile(io.BytesIO(buffer.getvalue())).namelist()
+    assert "Strip1.csv" in names and "slide_S1/S1__Strip1.xml" in names, (
+        f"The strip download is missing its map or its .xml: {names}"
     )

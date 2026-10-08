@@ -111,7 +111,7 @@ def test_every_slide_and_plate_with_something_to_cut_gets_one_xml(experiment):
 
 
 @pytest.mark.parametrize(
-    ("order", "folder"), [(export.CutOrder.BY_SLIDE, "slide_Single_cells/"), (export.CutOrder.BY_PLATE, "plate_Plate1/")]
+    ("order", "folder"), [(export.CutOrder.BY_SLIDE, "slide_Single_cells/"), (export.CutOrder.BY_PLATE, "Plate1/")]
 )
 def test_the_download_follows_the_cutting_order(experiment, order, folder):
     cuts, pooled, assignment = experiment
@@ -123,7 +123,7 @@ def test_the_download_follows_the_cutting_order(experiment, order, folder):
     assert len(xmls) == 4 and any(name.startswith(folder) for name in xmls), (
         f"Cutting {order.value} by {order.value} should put the files under {folder}…, got {xmls}."
     )
-    for expected in ("samples.csv", "plate_Plate1.csv", "plate_Plate2.csv", "COLLECTION_PLAN.txt", "provenance.json"):
+    for expected in ("samples.csv", "Plate1.csv", "Plate2.csv", "COLLECTION_PLAN.txt", "provenance.json"):
         assert expected in names, f"{expected} is missing from the download."
 
     steps = zipfile.ZipFile(io.BytesIO(bundle.getvalue())).read("COLLECTION_PLAN.txt").decode()

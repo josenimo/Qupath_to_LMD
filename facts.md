@@ -254,7 +254,7 @@ The reading and QC below is unchanged; it now runs once per uploaded file.
      coordinates grow downward and the LMD stage does not.
    - One `new_shape` per selected row, in load order, into `plan.shapes["well"]`.
    - QC image is written to a fresh temp directory, not the working directory.
-   Then `export.build_bundle` zips: `<stem>.xml`, `<stem>_<plate>_wellplate.csv`,
+   Then `export.build_bundle` zips: `<stem>.xml`, `<stem>_<plate>_wellplate.csv` (`<stem>_tubes.csv` / `<stem>_strip.csv` for the holders),
    `samples_and_wells.json`, `provenance.json`, `<stem>_processed.geojson` (sanitised for
    QuPath re-import), `collection.png`, and the session log.
 
@@ -866,11 +866,11 @@ offered are the real ones — a larger smallest circle, or a lower smoothing tol
   a slide that sends nothing to a plate gets no file, so the instructions never send the user to
   mount a slide and cut nothing.
 - `export.build_experiment_bundle` zips `samples.csv` (from `PooledSelection.by_sample()`), one
-  `plate_Pn.csv` each, `samples_and_wells.json` keyed by plate, `provenance.json` (experiment plus
+  `Plate<n>.csv` (`TubeHolder<n>.csv`, `Strip<n>.csv`) each, `samples_and_wells.json` keyed by collector, `provenance.json` (experiment plus
   one entry per cut), `COLLECTION_PLAN.txt`, the XMLs and their PNGs, and one
   `qupath/<slide>_processed.geojson` per slide. `CutOrder.BY_SLIDE` files XMLs as
-  `slide_<S>/<S>__<P>.xml`, `BY_PLATE` as `plate_<P>/<P>__<S>.xml` — both names carry slide and
-  plate. `COLLECTION_PLAN.txt` is numbered steps in that order, naming the calibration points per slide.
+  `slide_<S>/<S>__<P>.xml`, `BY_PLATE` as `<P>/<P>__<S>.xml`, `<P>` being `Plate1`, `TubeHolder1`, … (`decisions.md` 081) — both names carry slide and
+  plate. `COLLECTION_PLAN.txt` is numbered steps in that order, naming the calibration points per slide and saying "Load TubeHolder2 (tubes A–D)."; provenance records the collector.
   **`CutOrder` changes only the download's organisation** — folders, file names, the order of
   `COLLECTION_PLAN.txt`; every `.xml` is identical either way and can be loaded in any order. The
   UI calls it *Organise the download* and says so (079). Was `HOW_TO_CUT.txt` until 079.
