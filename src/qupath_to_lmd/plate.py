@@ -1,31 +1,86 @@
-"""Well plates: which wells are usable, laying samples out on them, and reading layouts back."""
+"""Collectors: which positions are usable, laying samples out on them, and reading layouts back.
+
+A collector is what the LMD cuts into: a plate, a tube holder or a strip holder. The module and
+its `plate` parameters keep the older name; in code, `plate` means the collector
+(`decisions.md` 081).
+"""
 
 import ast
 import math
 import string
+from dataclasses import dataclass
 from enum import Enum
 from random import Random
 
 import pandas
 from loguru import logger
 
-# rows, columns
-PLATE_SHAPES = {"384": (16, 24), "96": (8, 12)}
+
+@dataclass(frozen=True)
+class Collector:
+    """One kind of collector the LMD holds, and how its positions are written."""
+
+    key: str
+    label: str
+    rows: int
+    columns: int
+    # Plates write a position as row and column, `C3`. The tube and strip holders have one
+    # column, and the LMD names their caps by the letter alone, `C` (`decisions.md` 081).
+    numbered: bool
+    name_prefix: str
+    noun: str
+    position: str
+    # Margin and spacing exist for the unreliable edge wells of a 384 plate and for pipetting
+    # between wells; on a holder of four tubes they would only leave tubes unused.
+    spacing: bool
+
+
+COLLECTORS = {
+    "384": Collector("384", "384 well plate", 16, 24, True, "Plate", "plate", "well", True),
+    "96": Collector("96", "96 well plate", 8, 12, True, "Plate", "plate", "well", True),
+    "tubes": Collector(
+        "tubes", "Eppendorf tube holder (4 tubes)", 4, 1, False, "TubeHolder", "tube holder", "tube", False
+    ),
+    "strip": Collector("strip", "8-well strip holder", 8, 1, False, "Strip", "strip holder", "well", False),
+}
 
 
 class SawParseError(Exception):
     """A samples-and-wells file could not be read as a dictionary."""
 
 
+def collector(plate: str) -> Collector:
+    """The collector for a key of `COLLECTORS`."""
+    if plate not in COLLECTORS:
+        raise ValueError(f"Collector must be one of {list(COLLECTORS)}, got {plate!r}")
+    return COLLECTORS[plate]
+
+
 def plate_dimensions(plate: str) -> tuple[int, int]:
-    """Rows and columns of a supported plate.
+    """Rows and columns of a supported collector.
 
     Named `dimensions` rather than `shape`, because in this app a shape is something the
     laser cuts (see GLOSSARY.md).
     """
-    if plate not in PLATE_SHAPES:
-        raise ValueError(f"Plate must be one of {sorted(PLATE_SHAPES)}, got {plate!r}")
-    return PLATE_SHAPES[plate]
+    chosen = collector(plate)
+    return chosen.rows, chosen.columns
+
+
+def split_position(label: str) -> tuple[str, int | None]:
+    """`C3` is row C, column 3; `C`, a tube or a strip well, is row C with no column."""
+    return label[0], int(label[1:]) if len(label) > 1 else None
+
+
+def _column_labels(chosen: Collector, as_text: bool) -> list:
+    if not chosen.numbered:
+        return [chosen.position]
+    return [str(i) if as_text else i for i in range(1, chosen.columns + 1)]
+
+
+def _cell(chosen: Collector, label: str) -> tuple[str, object]:
+    """Where a position sits in a collector's table: row and column label."""
+    row, column = split_position(label)
+    return row, chosen.position if column is None else column
 
 
 def acceptable_wells(plate: str = "384", margins: int = 0, step_row: int = 1, step_col: int = 1) -> list[str]:
@@ -34,6 +89,9 @@ def acceptable_wells(plate: str = "384", margins: int = 0, step_row: int = 1, st
     The margin exists because the LMD7 collects unreliably into the outermost wells of a
     384 plate; the steps leave blanks between samples for easier pipetting.
     """
+    chosen = collector(plate)
+    if not chosen.spacing:
+        return list(string.ascii_uppercase[: chosen.rows])
     max_row, max_col = plate_dimensions(plate)
     if not isinstance(margins, int):
         raise ValueError("margins must be an integer")
@@ -72,12 +130,12 @@ def wells_from(wells: list[str], start_well: str | None) -> list[str]:
 
 
 def default_layout(plate: str = "384") -> pandas.DataFrame:
-    """The bare plate, every cell holding its own well name."""
-    rows, cols = plate_dimensions(plate)
-    row_labels = list(string.ascii_uppercase[:rows])
-    col_labels = list(range(1, cols + 1))
+    """The bare collector, every cell holding its own position name."""
+    chosen = collector(plate)
+    row_labels = list(string.ascii_uppercase[: chosen.rows])
+    col_labels = _column_labels(chosen, as_text=False)
     return pandas.DataFrame(
-        [[f"{row}{col}" for col in col_labels] for row in row_labels],
+        [[f"{row}{col}" if chosen.numbered else row for col in col_labels] for row in row_labels],
         index=row_labels,
         columns=col_labels,
     )
@@ -248,7 +306,7 @@ def sample_layout(
     Returns the layout and the classes that did not fit, so the caller can say so rather
     than let them disappear.
     """
-    rows, cols = plate_dimensions(plate)
+    chosen = collector(plate)
     wells = list(wells if wells is not None else acceptable_wells(plate))
 
     # Sorted, so the same file laid out twice gives the same plate.
@@ -263,12 +321,12 @@ def sample_layout(
 
     layout = pandas.DataFrame(
         None,
-        index=list(string.ascii_uppercase[:rows]),
-        columns=range(1, cols + 1),
+        index=list(string.ascii_uppercase[: chosen.rows]),
+        columns=_column_labels(chosen, as_text=False),
         dtype=object,
     )
     for class_name, well in zip(ordered_classes, wells, strict=False):
-        layout.at[well[0], int(well[1:])] = class_name
+        layout.at[_cell(chosen, well)] = class_name
 
     return layout, unplaced
 
@@ -284,10 +342,11 @@ def highlight(values: set[str]) -> callable:
     return style
 
 
-def layout_to_saw(layout: pandas.DataFrame) -> dict[str, str]:
-    """Read a plate layout back into `{class_name: well}`."""
+def layout_to_saw(layout: pandas.DataFrame, plate: str = "384") -> dict[str, str]:
+    """Read a collector layout back into `{class_name: well}`."""
+    numbered = collector(plate).numbered
     return {
-        class_name: f"{row}{column}"
+        class_name: f"{row}{column}" if numbered else str(row)
         for row, series in layout.iterrows()
         for column, class_name in series.items()
         if class_name and pandas.notna(class_name)
@@ -296,16 +355,17 @@ def layout_to_saw(layout: pandas.DataFrame) -> dict[str, str]:
 
 def placement_dataframe(samples_and_wells: dict[str, str], plate: str = "384") -> pandas.DataFrame:
     """The plate as a table of class names, for the CSV in the download bundle."""
-    logger.info(f"Building placement table for a {plate} well plate")
-    rows, cols = plate_dimensions(plate)
+    chosen = collector(plate)
+    logger.info(f"Building placement table for a {chosen.label}")
 
     table = pandas.DataFrame(
         "",
-        index=list(string.ascii_uppercase[:rows]),
-        columns=[str(i) for i in range(1, cols + 1)],
+        index=list(string.ascii_uppercase[: chosen.rows]),
+        columns=_column_labels(chosen, as_text=True),
     )
     for class_name, well in samples_and_wells.items():
-        table.at[well[0], well[1:]] = class_name
+        row, column = split_position(well)
+        table.at[row, chosen.position if column is None else str(column)] = class_name
 
     return table
 

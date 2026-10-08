@@ -44,7 +44,8 @@ src/qupath_to_lmd/
                                   rewrite_classification, sanitize_for_qupath,
                                   synthesize_qupath_columns, classification_values,
                                   implied_pixel_size, drop_unused_columns
-  plate.py                        plate shapes, acceptable_wells, layouts, saw parse/convert,
+  plate.py                        COLLECTORS registry (plates, tube holder, strip holder),
+                                  split_position, acceptable_wells, layouts, saw parse/convert,
                                   PlateDistribution, plates_needed, assign_to_plates, per_plate
   qc.py                           triangle_qc, validate_saw, compare_pixel_size (reports)
   stats.py                        class_statistics, for_display, reference_pixel_sizes
@@ -909,6 +910,9 @@ Initialised in the block at the top of `streamlit_app.py`. Any new key belongs h
 
 - 384-well plate = rows A–P (16) × columns 1–24. 96-well = rows A–H (8) × columns 1–12.
 - Wells are strings like `"C3"`: row letter + column number, no zero padding.
+- **Tube holder** = 4 Eppendorf tubes, CapIDs `A`–`D`. **Strip holder** = one 8-well strip, CapIDs
+  `A`–`H`. Letters only, no column (`decisions.md` 081). Each holder is one collector, the way a
+  plate is; margin and spacing do not apply to them. All of it lives in `plate.COLLECTORS`.
 - On the LMD7 with a 384-well plate, **rows A/B and columns 1/2 collect unreliably** —
   hence the margin control; margin 2 is the documented suggestion for 384.
 - Row/column *step* leaves blank wells between samples for easier pipetting.

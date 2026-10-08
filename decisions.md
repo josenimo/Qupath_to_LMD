@@ -1900,3 +1900,25 @@ Jose's notes after clicking through 078.
   experiment summary only. Session state is shared, so going to Extras and back loses nothing.
 - **`COLLECTION_PLAN.txt` is no longer printed after processing**; it is in the download. The
   per-file cut path review stays.
+
+## 081 — collectors: tube holders and strips beside plates
+**Date:** 2026-10-08 · **Status:** active · **refines 076**
+- **What the LMD cuts into is a collector**, Leica's own word: a 96 or 384 well plate, a holder
+  of four Eppendorf tubes, or a holder of one 8-well strip. Jose: one holder plays the part of a
+  plate — one tube is *not* one plate — and an experiment uses one kind of collector, never a mix.
+- **CapIDs on the holders are letters only**, `A`–`D` for tubes and `A`–`H` for the strip, as
+  Jose gave them. py-lmd writes the well string into `<CapID>` verbatim, so nothing changes there.
+- **A registry, `plate.COLLECTORS`**, says per collector how many rows and columns it has,
+  whether a position carries a column number, and the words for it. Every place that split a well
+  as `well[0]` / `well[1:]` reads it through `plate.split_position` instead. Rejected: tubes as a
+  one-column plate with the `1` stripped at export, which gives every position two names, `A1` in
+  the app and `A` in the `.xml` — the quiet kind of mismatch that sends tissue to the wrong cap.
+- **Collectors are named `Plate1`, `TubeHolder1`, `Strip1`**, explicit because most experiments
+  have only a few (Jose). That renames multi-plate downloads from `P1` to `Plate1` — file and
+  folder names and the keys of `samples_and_wells.json`, never the bytes of an `.xml` or a plate
+  map. Files keyed `P1` from earlier downloads still load, as plates.
+- **Margin and spacing are hidden, not disabled, on the holders.** On four tubes they mean
+  nothing, and a disabled control asks "why can't I?".
+- **The code keeps the name `plate`** (`plate.py`, `plate_type`, `n_plates`): a rename across
+  modules and session keys would bury this change. The interface and the docs say collector.
+- No 1536 plate: its rows run to `AF`, nobody has needed one, and Jose dropped it.
