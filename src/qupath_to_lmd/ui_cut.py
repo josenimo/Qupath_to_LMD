@@ -18,8 +18,8 @@ from qupath_to_lmd.ui_plates import PlateLayout
 from qupath_to_lmd.ui_slides import SlidesContext
 
 CUT_ORDER_LABELS = {
-    export.CutOrder.BY_SLIDE: "Slide by slide — calibrate each slide once, swap plates under it",
-    export.CutOrder.BY_PLATE: "Plate by plate — mount each plate once, calibrate each slide over it",
+    export.CutOrder.BY_SLIDE: "By slide — a folder per slide",
+    export.CutOrder.BY_PLATE: "By plate — a folder per plate",
 }
 
 
@@ -27,18 +27,25 @@ def _cut_order(context: SlidesContext, layout: PlateLayout) -> export.CutOrder:
     if not (context.several and layout.n_plates > 1):
         return export.CutOrder.BY_SLIDE
     order = st.radio(
-        "Order to cut in",
+        "Organise the download",
         options=list(CUT_ORDER_LABELS),
         format_func=lambda option: CUT_ORDER_LABELS[option],
         key="cut_order_choice",
-        help=(
-            "Which is less work depends on your lab: recalibrating a slide, or swapping the "
-            "collector plate. The files in the download are grouped, named and numbered for the "
-            "order you choose."
-        ),
+        horizontal=True,
+    )
+    st.caption(
+        "This only changes how the download is organised: the folders, the file names, and the "
+        "order of COLLECTION_PLAN.txt. Every `.xml` is the same either way, and you can load them "
+        "on the LMD in any order you like."
     )
     st.session_state.cut_order = order.value
     return order
+
+
+def _for_csv(sheet: pandas.DataFrame) -> pandas.DataFrame:
+    """µm² as whole numbers, as everywhere else they are shown (`decisions.md` 072)."""
+    areas = [column for column in sheet.columns if column.endswith("µm²")]
+    return sheet.assign(**{column: sheet[column].round(0).astype("Int64") for column in areas})
 
 
 def _overview(context: SlidesContext, sample_set: SampleSet, layout: PlateLayout) -> pandas.DataFrame:
@@ -51,7 +58,7 @@ def _overview(context: SlidesContext, sample_set: SampleSet, layout: PlateLayout
     ui_shared.show_amounts(sheet.set_index("sample"))
     st.download_button(
         "Download this sample sheet",
-        data=sheet.to_csv(index=False),
+        data=_for_csv(sheet).to_csv(index=False),
         file_name="samples.csv",
         mime="text/csv",
         key="sample_sheet_download",
@@ -171,7 +178,7 @@ def _process_experiment(context, sample_set, layout, tolerance, path_order, cut_
         st.warning("Nothing to cut: no slide has shapes in a well.")
         return
     st.session_state.zip_buffer = export.build_experiment_bundle(
-        cuts, sample_set.sheet().assign(
+        cuts, _for_csv(sample_set.sheet()).assign(
             plate=lambda sheet: sheet["sample"].map(lambda s: layout.assignment.get(s, (None, None))[0]),
             well=lambda sheet: sheet["sample"].map(lambda s: layout.assignment.get(s, (None, None))[1]),
         ),

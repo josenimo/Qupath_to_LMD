@@ -200,6 +200,34 @@ def assign_to_plates(
     return assignment
 
 
+def assignment_from_scheme(parsed: dict) -> dict[str, tuple[str, str]]:
+    """Turn a loaded samples-and-wells file into a plate assignment.
+
+    Reads both shapes the app writes: one plate, `{"Tumor_r1": "C3", ...}`, which is plate P1;
+    and several, `{"P1": {"Tumor_r1": "C3"}, "P2": {...}}`, which is `samples_and_wells.json` from
+    an experiment download and the all-plates button of the Plates stage.
+
+    Raises:
+        SawParseError: a mixture of the two, or plate names that are not `P1`, `P2`, …
+    """
+    nested = [isinstance(value, dict) for value in parsed.values()]
+    if not any(nested):
+        return {str(sample): ("P1", str(well)) for sample, well in parsed.items()}
+    if not all(nested):
+        raise SawParseError(
+            "The file mixes plates and wells at the top level. Use either {sample: well} for one "
+            "plate, or {plate: {sample: well}} for several."
+        )
+    names = [str(name) for name in parsed]
+    if not all(name[:1] == "P" and name[1:].isdigit() for name in names):
+        raise SawParseError(f"Plates must be named P1, P2, …; this file has {names}.")
+    return {
+        str(sample): (str(name), str(well))
+        for name, scheme in parsed.items()
+        for sample, well in scheme.items()
+    }
+
+
 def per_plate(assignment: dict[str, tuple[str, str]]) -> dict[str, dict[str, str]]:
     """Split a plate assignment into one samples-and-wells scheme per plate."""
     schemes: dict[str, dict[str, str]] = {}

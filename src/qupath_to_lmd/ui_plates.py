@@ -5,6 +5,7 @@ the layout the app has always made; more appear only when the samples need them 
 asks (`decisions.md` 076).
 """
 
+import json
 from dataclasses import dataclass
 
 import streamlit as st
@@ -156,12 +157,18 @@ def _plates_control(samples: list[str], settings: dict) -> tuple[int, plate.Plat
     return int(n_plates), distribution
 
 
-def _custom_scheme(samples: list[str], plate_type: str) -> dict[str, str] | None:
-    """A samples-and-wells file of the user's own, overriding the generated layout on one plate."""
+def _custom_assignment(samples: list[str], plate_type: str) -> dict[str, tuple[str, str]] | None:
+    """A samples-and-wells file of the user's own, overriding the generated layout.
+
+    One plate (`{sample: well}`) or several (`{"P1": {sample: well}, ...}`) — so the
+    `samples_and_wells.json` of any earlier download loads back in for changes.
+    """
     with st.expander("Use your own samples-and-wells file instead"):
         st.caption(
-            "A `.txt` or `.json` holding a Python dictionary of sample name to well, e.g. "
-            "`{'Tumor': 'C3', 'Stroma': 'C5'}`. It replaces the layout above and uses one plate."
+            "A `.txt` or `.json` holding a dictionary of sample to well, e.g. "
+            "`{'Tumor_r1': 'C3', 'Tumor_r2': 'C5'}`, or of plate to such a dictionary, e.g. "
+            "`{'P1': {...}, 'P2': {...}}`. The `samples_and_wells.json` of an earlier download "
+            "works as it is. It replaces the layout above."
         )
         uploaded = st.file_uploader(
             "Samples-and-wells file", type=["txt", "json"], accept_multiple_files=False, key="saw_uploader"
@@ -169,27 +176,38 @@ def _custom_scheme(samples: list[str], plate_type: str) -> dict[str, str] | None
         if uploaded is None:
             return None
         try:
-            candidate = plate.parse_saw_file(uploaded)
+            assignment = plate.assignment_from_scheme(plate.parse_saw_file(uploaded))
         except plate.SawParseError as error:
             st.error(f"Could not read that samples-and-wells file: {error}")
             logger.error(f"Samples-and-wells parse failed: {error}")
             return None
-        report = qc.validate_saw(candidate, samples, plate=plate_type)
-        if report.missing_classes:
-            st.warning(
-                f"{len(report.missing_classes)} samples have no well in your file and will not be "
-                f"collected: {', '.join(sorted(report.missing_classes)[:10])}"
-            )
-        if report.duplicate_wells:
-            st.warning(f"Wells receiving more than one sample: {report.duplicate_wells}")
-        if report.invalid_wells:
-            st.error(
-                f"These wells do not exist on a {plate_type} well plate: {sorted(report.invalid_wells)}. "
-                "Fix the file or change the plate type."
-            )
+
+        invalid = False
+        for name, scheme in plate.per_plate(assignment).items():
+            report = qc.validate_saw(scheme, [], plate=plate_type)
+            if report.duplicate_wells:
+                st.warning(f"{name}: wells receiving more than one sample: {report.duplicate_wells}")
+            if report.invalid_wells:
+                st.error(
+                    f"{name}: these wells do not exist on a {plate_type} well plate: "
+                    f"{sorted(report.invalid_wells)}. Fix the file or change the plate type."
+                )
+                invalid = True
+        if invalid:
             return None
-        st.success(f"Using your samples-and-wells file: {len(candidate)} samples.")
-        return candidate
+        missing = [sample for sample in samples if sample not in assignment]
+        if missing:
+            st.warning(
+                f"{len(missing)} samples have no well in your file and will not be collected: "
+                f"{', '.join(missing[:10])}"
+            )
+        unknown = [sample for sample in assignment if sample not in samples]
+        if unknown:
+            st.caption(f"Ignored, not samples of this collection: {', '.join(unknown[:10])}")
+            assignment = {sample: place for sample, place in assignment.items() if sample in samples}
+        n_plates = len(plate.per_plate(assignment))
+        st.success(f"Using your samples-and-wells file: {len(assignment)} samples on {n_plates} plate(s).")
+        return assignment
 
 
 def render(sample_set: SampleSet) -> PlateLayout | None:
@@ -205,10 +223,9 @@ def render(sample_set: SampleSet) -> PlateLayout | None:
     n_plates, distribution = _plates_control(samples, settings)
     settings["distribution"] = distribution.value
 
-    custom = _custom_scheme(samples, plate_type)
+    custom = _custom_assignment(samples, plate_type)
     if custom is not None:
-        assignment = {sample: ("P1", well) for sample, well in custom.items()}
-        layout = PlateLayout(plate_type, settings, assignment, source="uploaded")
+        layout = PlateLayout(plate_type, settings, custom, source="uploaded")
     else:
         assignment = plate.assign_to_plates(
             samples, settings["usable"], n_plates, distribution,
@@ -235,12 +252,31 @@ def render(sample_set: SampleSet) -> PlateLayout | None:
         st.warning("No sample has a well, so there is nothing to cut.")
         return None
     edited: dict[str, tuple[str, str]] = {}
-    containers = st.tabs(names) if len(names) > 1 else [st.container()]
+    slots = []
+    several = len(names) > 1
+    containers = st.tabs(names) if several else [st.container()]
     for container, name in zip(containers, names, strict=True):
         with container:
             wells = settings["first_plate"] if name == "P1" else settings["usable"]
             scheme = ui_shared.editable_plate(schemes[name], plate_type, key_suffix=name)
-            ui_shared.plate_preview(scheme, plate_type, wells=wells, key_suffix=name)
+            slots.append(
+                ui_shared.plate_preview(
+                    scheme, plate_type, wells=wells, key_suffix=name, plate_name=name, slot_for_all=several
+                )
+            )
             edited.update({sample: (name, well) for sample, well in scheme.items()})
     layout.assignment = edited
+
+    if several:
+        # Filled after every tab, so hand edits on any plate are in the file. The same shape as
+        # `samples_and_wells.json` in the download, and both load back in below.
+        everything = json.dumps(plate.per_plate(edited), indent=4)
+        for slot, name in zip(slots, names, strict=True):
+            slot.download_button(
+                "Download samples and wells setup for all plates",
+                data=everything,
+                file_name="samples_and_wells_all_plates.json",
+                mime="application/json",
+                key=f"saw_download_all_{name}",
+            )
     return layout

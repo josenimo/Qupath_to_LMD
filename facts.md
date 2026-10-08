@@ -89,7 +89,11 @@ demo_Qupath_project/              real QuPath project used as test fixture
   multiclass_cells.geojson        72 cells from a real QuPath 0.7.0 export: single-class,
                                   multi-class and unclassified, plus 3 added calib points
   demo_samples_and_wells.txt      python-dict-literal saw file for the upload path
-  QuPath_scripts/*.groovy         detections_to_annotations, select_random_detections
+  demo1/P<p>_S<s>.geojson         synthetic: 2 patients × 3 serial sections, ~150 immune,
+                                  ~500 cancer, ~1000 stroma cells each, classes prefixed
+                                  P1_/P2_, 0.5 µm/px, 5 calib points; tools/make_demo1.py
+  QuPath_scripts/*.groovy         detections_to_annotations, select_random_detections,
+                                  export_for_lmd (Run for project: one .geojson per image)
 assets/                           screenshots, example classes.json
 ```
 
@@ -165,7 +169,15 @@ sidebar summary.
 - **Stage 3 reads only `SampleSet.samples`**; Stage 4 reads the sample set and the layout.
 - Slide-only and plate-only controls appear only when there are several (076): slide tabs, the
   pooling note, the class × slide table, the slide strategy, the scale table, plate tabs, the
-  distribution choice, the cut order.
+  distribution choice, the all-plates download, the download organisation.
+- **Every slide's calibration points must be confirmed** (`decisions.md` 079): a checkbox per
+  slide, keyed on the three points chosen, so changing a point withdraws the confirmation. Until
+  every slide is confirmed Stage 1 returns None with a note naming the slides still waiting — a
+  gate, not an `st.stop()`. With several slides the ticks sit in a line above the tabs, not in the
+  tab labels: `st.tabs` takes no key, so relabelling could reset the open tab.
+- **The sidebar has two tabs**: 📋 Experiment (the summary, stages marked 🔬 🧬 🧫 ✂️) and
+  🧰 Extras (the classes generator). Extras is filled before the stages, so a hard stop in a stage
+  never takes it away.
 - **One slide on one plate downloads exactly the old bundle** (`export.build_bundle`), and
   `tests/test_app.py` compares the downloaded `.xml`/`.csv` for the demo annotations with
   `tools/golden/annotations.*` byte for byte. Anything more uses `export.build_experiment_bundle`.
@@ -214,10 +226,15 @@ The reading and QC below is unchanged; it now runs once per uploaded file.
    `sample_layout`/`assign_wells` layout. No *Confirm* button any more, for any method: the plate
    updates live (078). `ui_shared.plate_preview` is the only plate renderer (045).
 2.3 **Custom samples-and-wells upload** — an expander in the Plates stage, for every method;
-   overrides the generated layout and uses one plate.
+   overrides the generated layout. `plate.assignment_from_scheme` reads both shapes the app
+   writes: `{sample: well}` (plate P1) and `{"P1": {sample: well}, "P2": …}` — so the
+   `samples_and_wells.json` of any download, one plate or several, loads back in for changes.
+   Each plate's scheme downloads as `samples_and_wells_P<n>.json`; with several plates a second
+   button beside it downloads all of them (`samples_and_wells_all_plates.json`), filled after every
+   tab so hand edits on any plate are in it.
    `plate.parse_saw_file` reads a `.txt`/`.json` containing a **Python dict literal** and
    `ast.literal_eval`s it (trailing commas fine, `//` comments not). Raises
-   `SawParseError` with a specific reason. Sets `use_plate_wells = False`.
+   `SawParseError` with a specific reason.
 3. **Process** — `model.plan_from_class_wells` builds a `CollectionPlan`
    (`group_key = classification_name`, `well` mapped from the saw dict, unmatched shapes
    left with no well and reported), then `export.build_collection`:
@@ -232,7 +249,7 @@ The reading and QC below is unchanged; it now runs once per uploaded file.
    `samples_and_wells.json`, `provenance.json`, `<stem>_processed.geojson` (sanitised for
    QuPath re-import), `collection.png`, and the session log.
 
-**Extra #1** (below the main flow): generates a QuPath `classes.json` from two lists of
+**Extra #1** (sidebar, 🧰 Extras tab): generates a QuPath `classes.json` from two lists of
 categoricals × replicate count, cycling 6 hard-coded colours as Java signed ints.
 
 ## Workflow routing and image scale (Phase 1)
@@ -466,11 +483,12 @@ Step 6 offers a choice of what to cut out of each region: **circles packed insid
 is the default and the point of the workflow, or **the whole regions**. Whole regions is the
 only option when the file gives no image scale, because every packing amount is an area in µm².
 
-**Steps 4, 5 and 6 are all `st.columns([1, 2])`** — numbers on the left, a picture of what they
-produce on the right. Step 4 draws every shape in the file, coloured where the class is kept and
-grey where it is not, which is the only place the app shows a user what they actually uploaded.
-Step 5 draws the regions. Step 6's table is too wide for a third of the page, so its picture goes
-directly below instead (`decisions.md` 071).
+**The classes table is full width with its picture below** (`decisions.md` 079) — beside the
+picture it was a third of the page and had to be scrolled sideways, worst with a column per
+slide. The picture draws every shape in the file, coloured where the class is kept and grey where
+it is not, which is the only place the app shows a user what they actually uploaded. The regions
+step keeps `st.columns([1, 2])`, numbers beside the picture; the what-to-collect table is too wide
+for that, so its picture goes directly below (`decisions.md` 071).
 
 `ui_samples.class_step` owns the classes picture, so every method gets it.
 
@@ -838,10 +856,16 @@ offered are the real ones — a larger smallest circle, or a lower smoothing tol
   mount a slide and cut nothing.
 - `export.build_experiment_bundle` zips `samples.csv` (from `PooledSelection.by_sample()`), one
   `plate_Pn.csv` each, `samples_and_wells.json` keyed by plate, `provenance.json` (experiment plus
-  one entry per cut), `HOW_TO_CUT.txt`, the XMLs and their PNGs, and one
+  one entry per cut), `COLLECTION_PLAN.txt`, the XMLs and their PNGs, and one
   `qupath/<slide>_processed.geojson` per slide. `CutOrder.BY_SLIDE` files XMLs as
   `slide_<S>/<S>__<P>.xml`, `BY_PLATE` as `plate_<P>/<P>__<S>.xml` — both names carry slide and
-  plate. `HOW_TO_CUT.txt` is numbered steps in that order, naming the calibration points per slide.
+  plate. `COLLECTION_PLAN.txt` is numbered steps in that order, naming the calibration points per slide.
+  **`CutOrder` changes only the download's organisation** — folders, file names, the order of
+  `COLLECTION_PLAN.txt`; every `.xml` is identical either way and can be loaded in any order. The
+  UI calls it *Organise the download* and says so (079). Was `HOW_TO_CUT.txt` until 079.
+- `samples.csv` writes µm² as whole numbers, like every table on screen. For whole shapes the
+  sheet has no `class` column, because a sample *is* its class; with replicates the two differ
+  (`Tumor_r2` of `Tumor`).
 - One slide on one plate still goes through `build_bundle`, unchanged.
 
 ## Session state keys
