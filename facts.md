@@ -73,7 +73,7 @@ src/qupath_to_lmd/
   ui_collect_whole.py             method: whole shapes (was the annotations workflow)
   ui_collect_select.py            method: selected shapes (was the cell workflow)
   ui_collect_regions.py           method: regions and circles (was ui_packing)
-  ui_plates.py                    Stage 3: plate settings, number of plates, PlateLayout
+  ui_plates.py                    Stage 3, Collector: collector settings, how many, PlateLayout
   ui_cut.py                       Stage 4: overview, exclusions, process, download
   ui_summary.py                   sidebar: experiment at a glance, stage checklist
   ui_shared.py                    helpers several stages use: amounts, scale reporting,
@@ -151,7 +151,7 @@ Verified against both demo files.
 ## The pipeline, step by step
 
 One page of **four stages, always in this order** (`decisions.md` 078): **1 · Slides** →
-**2 · Samples** → **3 · Plates** → **4 · Cut**. Each stage hands the next a plain object —
+**2 · Samples** → **3 · Collector** → **4 · Cut**. Each stage hands the next a plain object —
 `ui_slides.SlidesContext`, then `model.SampleSet`, then `ui_plates.PlateLayout` — and no stage
 imports another. The router in `streamlit_app.py` only calls the four in turn and feeds the
 sidebar summary.
@@ -229,12 +229,16 @@ The reading and QC below is unchanged; it now runs once per uploaded file.
    `T-Cell_001…`, one name per shape, for single-cell collection. Stores
    `original_classification_name` so repeated runs stay idempotent, and rewrites the
    nested `classification` dict via `geojson.rewrite_classification`.
-2. **Plate layout** — `ui_plates.settings_step` is the only place plate options live (type,
-   margin, row/column spacing, start well, randomize), feeding `plate.acceptable_wells`, and
+2. **Collector layout** — `ui_plates.settings_step` is the only place collector options live
+   (collector, margin, row/column spacing, start well, randomize), feeding `plate.acceptable_wells`, and
    `plate.assign_to_plates` places the samples — sorted, so one plate is exactly the old
    `sample_layout`/`assign_wells` layout. No *Confirm* button any more, for any method: the plate
-   updates live (078). `ui_shared.plate_preview` is the only plate renderer (045).
-2.3 **Custom samples-and-wells upload** — an expander in the Plates stage, for every method;
+   updates live (078). `ui_shared.plate_preview` is the only collector renderer (045). The widget
+   `plate_type` holds a key of `plate.COLLECTORS` — `384`, `96`, `tubes`, `strip` — shown by its
+   label. Margin and spacing are hidden for the tube and strip holders (081); with more than one
+   collector a warning says how many separate cutting runs that is, and the number of collectors
+   can go past 50 when the samples need it (four tubes a holder reaches 50 at 200 samples).
+2.3 **Custom samples-and-wells upload** — an expander in the Collector stage, for every method;
    overrides the generated layout. `plate.assignment_from_scheme` reads both shapes the app
    writes: `{sample: well}` (the first collector) and `{"Plate1": {sample: well}, "Plate2": …}` (or `TubeHolder1`, `Strip1`; files keyed `P1` from before 081 load as plates) — so the
    `samples_and_wells.json` of any download, one plate or several, loads back in for changes.
@@ -900,7 +904,7 @@ Initialised in the block at the top of `streamlit_app.py`. Any new key belongs h
 | `packing_params` | `PackingParams` as a dict: sizes, gap, effort and seed of the last packing |
 | `region_budgets` | list of `ClassPacking` as dicts: per class, replicates, µm² per replicate, circle size range, gap |
 | `slide_strategy`, `slide_order` | how amounts are split between slides, and the order for priority |
-| `n_plates`, `plate_distribution` | plates in use and `'balanced'` \| `'sequential'` |
+| `n_plates`, `plate_distribution` | collectors in use and `'balanced'` \| `'sequential'` (the widget `plate_type` holds `'384'` \| `'96'` \| `'tubes'` \| `'strip'`) |
 | `cut_order` | `'slide'` \| `'plate'` — order of the cutting instructions and download folders |
 | `zip_buffer`, `bundle_name` | the download bundle and its filename |
 | `bundle_signature` | hash of what built the bundle; a mismatch withdraws the download |

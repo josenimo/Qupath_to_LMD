@@ -84,6 +84,23 @@ def test_one_annotation_file_through_the_app_matches_the_golden_reference(monkey
     assert files["TD_01_verysmall_mIF_384_wellplate.csv"] == (GOLDEN / "annotations.csv").read_bytes()
 
 
+def test_one_annotation_file_into_a_tube_holder_cuts_into_tubes(monkeypatch):
+    """Choosing the tube holder in Stage 3 reaches the .xml as letter CapIDs, end to end."""
+    def tubes(app):
+        app.selectbox(key="plate_type").set_value("tubes")
+
+    app = _run(monkeypatch, ["TD_01_verysmall_mIF.geojson"], actions=[tubes])
+    assert not [box for box in app.number_input if "Margin" in str(box.label)], (
+        "The tube holder still shows a margin control, which does nothing on four tubes."
+    )
+    files = _contents(app)
+    assert files["TD_01_verysmall_mIF.xml"] == (GOLDEN / "tubes.xml").read_bytes(), (
+        "The app's tube holder .xml differs from tools/golden/tubes.xml, so choosing tubes in the "
+        "app does not cut what the library cuts into tubes."
+    )
+    assert files["TD_01_verysmall_mIF_tubes.csv"] == (GOLDEN / "tubes.csv").read_bytes()
+
+
 def test_two_slides_on_two_plates_give_four_cutting_files(monkeypatch):
     def two_plates(app):
         key = next(w.key for w in app.number_input if w.key and w.key.startswith("n_plates_"))

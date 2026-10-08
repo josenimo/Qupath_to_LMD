@@ -1,7 +1,7 @@
 """Stage 4, Cut: the cutting files, what goes where, and the download.
 
-Works from a `SampleSet` and a `PlateLayout` only. One slide on one plate builds exactly the
-bundle the app always has; anything more becomes one `.xml` per slide and plate, with numbered
+Works from a `SampleSet` and a `PlateLayout` only. One slide on one collector builds exactly the
+bundle the app always has; anything more becomes one `.xml` per slide and collector, with numbered
 instructions in the order the user cuts in (`decisions.md` 076).
 """
 
@@ -12,24 +12,27 @@ import pandas
 import streamlit as st
 from loguru import logger
 
-from qupath_to_lmd import export, slides, ui_shared
+from qupath_to_lmd import export, plate, slides, ui_shared
 from qupath_to_lmd.model import CLASS_NAME, GROUP_KEY, SampleSet
 from qupath_to_lmd.ui_plates import PlateLayout
 from qupath_to_lmd.ui_slides import SlidesContext
 
-CUT_ORDER_LABELS = {
-    export.CutOrder.BY_SLIDE: "By slide — a folder per slide",
-    export.CutOrder.BY_PLATE: "By plate — a folder per plate",
-}
+
+def _cut_order_labels(noun: str) -> dict:
+    return {
+        export.CutOrder.BY_SLIDE: "By slide — a folder per slide",
+        export.CutOrder.BY_PLATE: f"By {noun} — a folder per {noun}",
+    }
 
 
 def _cut_order(context: SlidesContext, layout: PlateLayout) -> export.CutOrder:
     if not (context.several and layout.n_plates > 1):
         return export.CutOrder.BY_SLIDE
+    labels = _cut_order_labels(plate.collector(layout.plate_type).noun)
     order = st.radio(
         "Organise the download",
-        options=list(CUT_ORDER_LABELS),
-        format_func=lambda option: CUT_ORDER_LABELS[option],
+        options=list(labels),
+        format_func=lambda option: labels[option],
         key="cut_order_choice",
         horizontal=True,
     )
@@ -64,6 +67,7 @@ def _overview(context: SlidesContext, sample_set: SampleSet, layout: PlateLayout
         key="sample_sheet_download",
     )
 
+    chosen = plate.collector(layout.plate_type)
     files = []
     for plate_name, scheme in layout.schemes.items():
         for name, frame in sample_set.shapes.items():
@@ -73,14 +77,14 @@ def _overview(context: SlidesContext, sample_set: SampleSet, layout: PlateLayout
             files.append(
                 {
                     "Slide": name,
-                    "Plate": plate_name,
+                    chosen.noun.capitalize(): plate_name,
                     "Shapes": len(cut),
-                    "Wells": cut[GROUP_KEY].nunique(),
+                    f"{chosen.position.capitalize()}s": cut[GROUP_KEY].nunique(),
                     "Calibration points": ", ".join(context.calibration[name][0]),
                 }
             )
     if len(files) > 1:
-        st.markdown(f"**{len(files)} cutting files, one per slide and plate**")
+        st.markdown(f"**{len(files)} cutting files, one per slide and {chosen.noun}**")
         st.dataframe(pandas.DataFrame(files), width="stretch", hide_index=True)
     return sheet
 
@@ -100,11 +104,13 @@ def _report_excluded(sample_set: SampleSet, layout: PlateLayout) -> None:
         not_selected_classes |= set(frame.loc[~grouped, CLASS_NAME])
 
     if unplaced:
+        chosen = plate.collector(layout.plate_type)
         names = sorted(unplaced_samples)
+        remedy = ", or lower the margin or spacing" if chosen.spacing else ""
         st.warning(
             f"{unplaced} shapes you asked to collect will **not** be cut, because their sample "
-            f"got no well: {', '.join(names[:8])}{' ...' if len(names) > 8 else ''}. Add a plate, "
-            "reduce the replicates, or lower the margin or spacing."
+            f"got no {chosen.position}: {', '.join(names[:8])}{' ...' if len(names) > 8 else ''}. "
+            f"Add a {chosen.noun}, or reduce the replicates{remedy}."
         )
     if not not_selected:
         return
@@ -155,7 +161,8 @@ def _process_one(context, sample_set, layout, tolerance, path_order) -> None:
     st.session_state.bundle_name = f"{Path(slide.source_file or 'collection').stem}_collection.zip"
     st.session_state.collection_image = result.image_path
     st.write(
-        f"Collection: {result.n_shapes} shapes, {result.n_vertices} vertices, {len(plan.wells_used)} wells used."
+        f"Collection: {result.n_shapes} shapes, {result.n_vertices} vertices, "
+        f"{len(plan.wells_used)} {plate.collector(layout.plate_type).position}s used."
     )
     ui_shared.report_path(result, plan.pixel_size_um)
     st.image(result.image_path, caption="The shapes that will be cut", width="content")
@@ -192,7 +199,8 @@ def _process_experiment(context, sample_set, layout, tolerance, path_order, cut_
 
     st.write(
         f"**{len(cuts)} cutting files**, {sum(c.result.n_shapes for c in cuts):,} shapes in all. "
-        "COLLECTION_PLAN.txt in the download lists each one with its slide, plate and calibration points."
+        f"COLLECTION_PLAN.txt in the download lists each one with its slide, "
+        f"{plate.collector(layout.plate_type).noun} and calibration points."
     )
     for cut in cuts:
         ui_shared.report_path(cut.result, cut.plan.pixel_size_um, label=f"{cut.slide} → {cut.plate}")
@@ -202,8 +210,8 @@ def render(context: SlidesContext, sample_set: SampleSet, layout: PlateLayout) -
     """Stage 4. Returns True once a current download is ready."""
     st.markdown("## 4 · Cut")
     st.markdown(
-        "Create the `.xml` file(s) for the LMD. Keep the QC image and plate scheme in the download "
-        "for your records."
+        f"Create the `.xml` file(s) for the LMD. Keep the QC image and the "
+        f"{plate.collector(layout.plate_type).noun} map in the download for your records."
     )
     tolerance, path_order = ui_shared.export_parameters()
     cut_order = _cut_order(context, layout)
