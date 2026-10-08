@@ -10,6 +10,7 @@ slides as neighbours. The selection engine runs once per slide, unchanged, and o
 bookkeeping — how much each slide is asked for and what it delivered — spans slides.
 """
 
+import dataclasses
 import io
 import zipfile
 from collections.abc import Mapping
@@ -23,9 +24,17 @@ import numpy
 import pandas
 from loguru import logger
 
-from qupath_to_lmd import export, geojson, selection, stats
+from qupath_to_lmd import budget, export, geojson, packing, selection, stats
 from qupath_to_lmd.budget import BudgetMode, ClassBudget
-from qupath_to_lmd.model import CLASS_NAME, CollectionPlan, plan_from_selection
+from qupath_to_lmd.model import (
+    CLASS_NAME,
+    GROUP_KEY,
+    REPLICATE,
+    CollectionPlan,
+    SampleSet,
+    groups_from_replicates,
+    plan_from_selection,
+)
 from qupath_to_lmd.plate import per_plate
 
 SLIDE = "slide"
@@ -253,6 +262,29 @@ class PooledSelection:
         return table.reset_index()
 
 
+def selected_samples(
+    frames: dict[str, geopandas.GeoDataFrame],
+    pooled: PooledSelection,
+    budgets: list[ClassBudget],
+    mode: BudgetMode,
+    pixel_sizes: Mapping[str, float | None],
+    params: dict | None = None,
+) -> SampleSet:
+    """The sample set a pooled selection makes, over each slide's whole frame.
+
+    The whole frame rather than the pool, so shapes the size filter removed stay reportable.
+    """
+    return samples_from_replicates(
+        frames,
+        {name: result.replicate_of for name, result in pooled.per_slide.items()},
+        budgets,
+        workflow="cells",
+        pixel_sizes=pixel_sizes,
+        unit=mode.unit,
+        params=params,
+    )
+
+
 def select_across_slides(
     pools: dict[str, geopandas.GeoDataFrame],
     budgets: list[ClassBudget],
@@ -324,11 +356,10 @@ def plans_for_slides(
 
 
 def cuts_for_experiment(
+    sample_set: SampleSet,
     slides: list[Slide],
-    pooled: PooledSelection,
     assignment: dict[str, tuple[str, str]],
     calibration: dict[str, tuple[list[str], numpy.ndarray]],
-    pixel_sizes: Mapping[str, float | None],
     *,
     plate: str = "384",
     simplify_tolerance: float = export.DEFAULT_SIMPLIFY_TOLERANCE,
@@ -338,16 +369,20 @@ def cuts_for_experiment(
 ) -> list[export.Cut]:
     """Build every `.xml` of an experiment: one per slide and plate that has something to cut.
 
-    A slide that sends nothing to a plate gets no file for it, so the instructions never ask the
-    user to mount a slide only to cut nothing.
+    Works from a `SampleSet`, so it does not matter which method chose the shapes. A slide that
+    sends nothing to a plate gets no file for it, so the instructions never ask the user to mount
+    a slide only to cut nothing.
     """
+    source_files = {slide.name: slide.source_file for slide in slides}
     cuts = []
     for plate_name, scheme in per_plate(assignment).items():
-        plans = plans_for_slides(
-            slides, pooled, scheme, calibration, pixel_sizes,
-            session_id=session_id, params={**(params or {}), "plate": plate_name},
-        )
-        for slide_name, slide_plan in plans.items():
+        for slide_name in sample_set.slide_names:
+            names, array = calibration[slide_name]
+            slide_plan = sample_set.plan(
+                slide_name, scheme, names, array,
+                source_file=source_files.get(slide_name), session_id=session_id,
+                params={**(params or {}), SLIDE: slide_name, "plate": plate_name},
+            )
             if slide_plan.selected.empty:
                 continue
             result = export.build_collection(
@@ -357,3 +392,128 @@ def cuts_for_experiment(
             cuts.append(export.Cut(slide_name, plate_name, slide_plan, result))
     logger.info(f"{len(cuts)} cuts: {[(cut.slide, cut.plate) for cut in cuts]}")
     return cuts
+
+
+@dataclass
+class PooledPacking:
+    """Circles packed slide by slide, and how each class's amount was split between slides."""
+
+    per_slide: dict[str, packing.PackingResult]
+    shares: dict[str, list[packing.ClassPacking]]
+
+    @property
+    def n_circles(self) -> int:
+        """How many circles will be cut, over every slide."""
+        return sum(result.n_circles for result in self.per_slide.values())
+
+
+def pack_across_slides(
+    patches: dict[str, geopandas.GeoDataFrame],
+    requests: list[packing.ClassPacking],
+    params: packing.PackingParams,
+    pixel_sizes: Mapping[str, float | None],
+    strategy: SlideStrategy = SlideStrategy.PROPORTIONAL,
+    order: list[str] | None = None,
+) -> PooledPacking:
+    """Split each class's µm² between slides by what their regions can hold, then pack each slide.
+
+    What a slide can hold is `packing.capacity`'s estimate, which already allows for the circle
+    sizes and the gap — the raw region area would promise up to twice what fits. Each slide is
+    packed on its own, so circles on one slide never collide with circles on another.
+
+    Raises:
+        packing.PackingError: a slide has no image scale; every amount here is an area.
+    """
+    order = list(order or patches)
+    missing = [name for name in order if not pixel_sizes.get(name)]
+    if missing:
+        raise packing.PackingError(f"Packing circles needs an image scale for every slide; missing: {missing}.")
+
+    available = pandas.DataFrame(
+        {
+            name: packing.capacity(patches[name], requests, pixel_sizes[name])["packable_estimate_um2"]
+            for name in order
+        }
+    ).fillna(0.0)
+    budgets = [item.as_budget() for item in requests]
+    split = split_budgets(budgets, available, strategy, order, BudgetMode.AREA)
+
+    shares = {
+        name: [
+            dataclasses.replace(item, area_per_replicate_um2=share.per_replicate)
+            for item, share in zip(requests, split[name], strict=True)
+        ]
+        for name in order
+    }
+    per_slide = {name: packing.pack(patches[name], shares[name], params, pixel_sizes[name]) for name in order}
+    return PooledPacking(per_slide=per_slide, shares=shares)
+
+
+def samples_from_replicates(
+    frames: dict[str, geopandas.GeoDataFrame],
+    replicates: dict[str, pandas.Series],
+    budgets: list[ClassBudget],
+    *,
+    workflow: str,
+    pixel_sizes: Mapping[str, float | None],
+    unit: str | None = None,
+    params: dict | None = None,
+) -> SampleSet:
+    """A sample set from shapes that know their replicate: `Tumor_r2` on every slide is one sample.
+
+    Serves selected shapes, packed circles and whole regions alike. Every replicate the budgets
+    ask for is a sample, even one that ended up empty, so it keeps its well.
+
+    Args:
+        frames: per slide, every candidate shape.
+        replicates: per slide, the replicate of each shape, NA where it is not collected.
+        budgets: what was asked for. `unit` set means the amount per replicate is a request
+            worth reporting; leave it None where a method takes everything it is given.
+        workflow: recorded in provenance.
+        pixel_sizes: per slide.
+        unit: `shapes` or `µm²`, or None.
+        params: everything else that determined the samples.
+    """
+    shapes = {}
+    for name, frame in frames.items():
+        replicate = replicates[name].reindex(frame.index)
+        shapes[name] = frame.assign(**{REPLICATE: replicate, GROUP_KEY: groups_from_replicates(frame, replicate)})
+    requested = (
+        {f"{item.class_name}_r{n}": item.per_replicate for item in budgets for n in range(1, item.replicates + 1)}
+        if unit
+        else {}
+    )
+    return SampleSet(
+        workflow=workflow,
+        shapes=shapes,
+        samples=budget.group_keys(budgets),
+        pixel_sizes=dict(pixel_sizes),
+        requested=requested,
+        unit=unit or "shapes",
+        params=params or {},
+    )
+
+
+def whole_shape_samples(
+    frames: dict[str, geopandas.GeoDataFrame],
+    classes: list[str],
+    pixel_sizes: Mapping[str, float | None],
+    params: dict | None = None,
+) -> SampleSet:
+    """Every shape of the chosen classes, one class per sample — the annotations route.
+
+    Pooled by class name: `Tumor` on every slide is one sample. Samples are sorted, which is the
+    order the plate has always filled them in.
+    """
+    shapes = {
+        name: frame.assign(**{REPLICATE: None, GROUP_KEY: frame[CLASS_NAME].where(frame[CLASS_NAME].isin(classes))})
+        for name, frame in frames.items()
+    }
+    present = set().union(*(set(frame[CLASS_NAME]) for frame in frames.values())) if frames else set()
+    return SampleSet(
+        workflow="legacy",
+        shapes=shapes,
+        samples=sorted(name for name in classes if name in present),
+        pixel_sizes=dict(pixel_sizes),
+        params=params or {},
+    )

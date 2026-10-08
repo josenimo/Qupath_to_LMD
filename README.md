@@ -5,7 +5,9 @@
 QuPath-to-LMD is the easiest way to go from QuPath annotations to LMD collection!
 With more than 60 unique users, we try to help everyone collect their tissues for DVP.
 
-Three workflows: **annotations**, the standard where every classified annotation is cut; **cell segmentation**, where you ask for a number of cells or an area per replicate and the app picks the cells; and **cellular neighbourhoods**, where classified cells are turned into contiguous regions of tissue and small circles are packed inside them to collect a set amount of each.
+Three ways to collect: **whole shapes**, the standard where every classified annotation is cut; **selected shapes**, where you ask for a number of cells (or annotations) or an area per replicate and the app picks them; and **regions and circles**, where classified cells are turned into contiguous regions of tissue and small circles are packed inside them to collect a set amount of each.
+
+All three work across **several slides** — shapes of the same class on different slides go into the same well, so you can collect more tissue than one slide holds — and across **several plates** when your samples do not fit on one.
 
 ## In QuPath
 
@@ -25,24 +27,29 @@ Go to [Streamlit Webapp Link](https://qupath-to-lmd.streamlit.app/)
   <img src="assets/webapp_cells_workflow.gif" alt="Open WebApp" width="700"/>
 </a>
 
-1. Upload your geojson file, and choose your calibration points
-2. Choose a workflow: annotations, cell segmentation, or cellular neighbourhoods
-3. Set up the plate
-4. Process the files and download your output files
+The page has four stages, always in this order, and the sidebar keeps a one-line summary of your
+experiment in view (e.g. *2 slides → 27 samples → 1 plate*):
 
-### Which workflow
+1. **Slides** — upload one `.geojson` per slide (several at once, or a `.zip` of them), and choose
+   each slide's calibration points
+2. **Samples** — choose how to collect (whole shapes, selected shapes, or regions and circles) and
+   how much
+3. **Plates** — set up the plate; more plates appear when the samples need them
+4. **Cut** — process the files and download them
 
-**Annotations** — every classified annotation is cut, one class per well. Optionally split a
+### How to collect
+
+**Whole shapes** — every classified annotation is cut, one class per well. Optionally split a
 class into one shape per well for single-cell collection.
 
-**Cell segmentation** — for files with thousands of classified cells. Choose your classes, then
+**Selected shapes** — for files with thousands of classified cells, or annotations you want up to an amount. Choose your classes, then
 set replicates and how much goes into each, either as a number of cells or as µm². The app
 spreads the chosen cells across the tissue so a replicate is not one corner of the slide, can
 avoid cells touching another cell you are collecting, and shows you exactly which cells were
 picked before you export. Cells below a minimum area (100 µm² by default, per class) are left
 out, so keeping only the shapes you can actually collect.
 
-**Cellular neighbourhoods** — for when a single cell is too little tissue but you still want to
+**Regions and circles** — for when a single cell is too little tissue but you still want to
 collect by cell type. Each cell is given the tissue nearest to it — up to a distance you set,
 which is what stops a cell at the edge of the tissue claiming the empty slide around it — and
 touching cells of the same class are merged into one **region**. Then, in one table with a row per class, you set how many replicates
@@ -73,7 +80,7 @@ is already settled.
 You can also collect **the whole regions** instead of circles, which is what you want if you want
 all of a neighbourhood rather than a measured amount of it.
 
-All three workflows let you set the smoothing tolerance and the cutting order, and all download
+All three let you set the smoothing tolerance and the cutting order, and all download
 the same bundle: the `.xml` for the LMD, the plate scheme, a QC image, your processed
 `.geojson`, and a log.
 
@@ -173,11 +180,22 @@ software (>8).
 
 (6) What if I want to collect various slides of tissue into the same 384wp
 
-I suggest you create a set of QuPath classes that include all slides, make sure they are unique (Slide1_celltypeA_control_1). Then annotate as normal and export a .geojson file per slide. 
-Then you should create a samples and wells scheme that includes all classes from all slides. Process each .geojson file with the same samples and wells scheme, and collect one slide at a time.
+Upload all the slides together — select several `.geojson` files, or upload a `.zip` of a folder of
+them. Each slide keeps its own calibration points and gets its own `.xml`.
 
-Alternatively, use **Start at well**: run the first slide, read the next free well from the
-caption under the plate, and start the next slide there.
+- **Into the same wells:** shapes of the same class on different slides are pooled into the same
+  sample. That is right when the slides are sections of the same sample (e.g. serial sections),
+  classified with the same classes. With an amount per replicate, you choose where it comes from:
+  in proportion to what each slide holds, an equal share from each, or the slides in order.
+- **Into different wells:** give each slide's classes different names in QuPath (e.g.
+  `P1_Tumor`, `P2_Tumor`), and they become separate samples.
+
+The download holds one `.xml` per slide (and per plate), a `samples.csv` saying what each well
+gets from each slide, and `HOW_TO_CUT.txt` with numbered steps for the LMD. To export every image
+of a QuPath project at once, run `demo_Qupath_project/QuPath_scripts/export_for_lmd.groovy` with
+*Run for project*, then zip the folder it writes.
+
+You can still fill one plate over several sessions with **Start at well** in the plate settings.
 
 (7) How should I position my calibration points?
 

@@ -65,11 +65,18 @@ src/qupath_to_lmd/
                                   order_for_cutting, path_stats, ORIENTATION_TRANSFORM
   extras.py                       QuPath classes.json generation
   === UI layer: Streamlit, owns session_state ===
-  ui_shared.py                    steps every workflow uses, incl. class_selection_step
-                                  (which draws the input beside its own table)
-  ui_legacy.py                    annotations workflow (frozen as of Phase 1)
-  ui_cells.py                     cell-segmentation workflow (step 8 is an st.fragment)
-  ui_packing.py                   cellular-neighbourhood workflow
+  ui_slides.py                    Stage 1: upload (1..n files or a zip), QC, calibration
+                                  per slide, scale_control; SlidesContext
+  ui_samples.py                   Stage 2: method choice, class table across slides,
+                                  slide strategy; methods() registry
+  ui_collect_whole.py             method: whole shapes (was the annotations workflow)
+  ui_collect_select.py            method: selected shapes (was the cell workflow)
+  ui_collect_regions.py           method: regions and circles (was ui_packing)
+  ui_plates.py                    Stage 3: plate settings, number of plates, PlateLayout
+  ui_cut.py                       Stage 4: overview, exclusions, process, download
+  ui_summary.py                   sidebar: experiment at a glance, stage checklist
+  ui_shared.py                    helpers several stages use: amounts, scale reporting,
+                                  plate_preview, editable_plate, export parameters, extras
   === other ===
   mock_streamlit.py               patch_streamlit() — stubs st.* for notebook use
   __init__.py                     empty
@@ -138,17 +145,34 @@ Verified against both demo files.
 
 ## The pipeline, step by step
 
-One page, top to bottom; each step gates on session state from the previous one. Steps 1–3
-are shared, then the router dispatches to one of two workflows.
+One page of **four stages, always in this order** (`decisions.md` 078): **1 · Slides** →
+**2 · Samples** → **3 · Plates** → **4 · Cut**. Each stage hands the next a plain object —
+`ui_slides.SlidesContext`, then `model.SampleSet`, then `ui_plates.PlateLayout` — and no stage
+imports another. The router in `streamlit_app.py` only calls the four in turn and feeds the
+sidebar summary.
 
-**Shared:** 1 upload + QC · 2 workflow choice · 3 calibration points.
-**Legacy then continues:** 4 optional class split · 5 plate layout · 6 process and download.
-**Cells then continues:** 4 class statistics and selection · 5 replicates, budgets and image
-scale · 6 plate and capacity · 7 selection with preview · 8 export.
-Both workflows reach a downloadable collection, and both share the same export parameters.
+- **Stage 2 dispatches to a method**, one module each, registered in `ui_samples.methods()` and
+  keyed by the workflow name provenance records: `legacy` → `ui_collect_whole` (*Whole shapes*),
+  `cells` → `ui_collect_select` (*Selected shapes*), `regions` → `ui_collect_regions` (*Regions
+  and circles*). Each exposes `LABEL`, `HELP` and `render(context) -> SampleSet | None`. A new
+  method is a new module plus one line in the registry.
+- **A `SampleSet`** holds, per slide, every candidate shape with its `group_key` (the sample) and
+  `replicate`; the list of samples the plate must hold (empty ones included, so they keep their
+  well); the scales; what was asked for; and the method's parameters. `.sheet()` is the sample
+  sheet; `.plan(slide, scheme, …)` builds one slide's plan for one plate via
+  `model.plan_from_groups`, which the old builders (`plan_from_class_wells`,
+  `plan_from_selection`) now delegate to — so the golden harness covers the route the app uses.
+- **Stage 3 reads only `SampleSet.samples`**; Stage 4 reads the sample set and the layout.
+- Slide-only and plate-only controls appear only when there are several (076): slide tabs, the
+  pooling note, the class × slide table, the slide strategy, the scale table, plate tabs, the
+  distribution choice, the cut order.
+- **One slide on one plate downloads exactly the old bundle** (`export.build_bundle`), and
+  `tests/test_app.py` compares the downloaded `.xml`/`.csv` for the demo annotations with
+  `tools/golden/annotations.*` byte for byte. Anything more uses `export.build_experiment_bundle`.
+- **A stale download is withdrawn**: the bundle is stamped with a hash of what built it and the
+  button disappears when that changes.
 
-Step numbers are passed into the `ui_shared` step functions rather than hard-coded, because
-the two workflows reach the shared steps at different points.
+The reading and QC below is unchanged; it now runs once per uploaded file.
 
 1. **Upload + QC** — `geojson.read_and_qc`, cached in the app by a thin wrapper.
    `geopandas.read_file`, then `set_crs(None, allow_override=True)`. Raises `GeojsonError`
@@ -184,20 +208,13 @@ the two workflows reach the shared steps at different points.
    `T-Cell_001…`, one name per shape, for single-cell collection. Stores
    `original_classification_name` so repeated runs stay idempotent, and rewrites the
    nested `classification` dict via `geojson.rewrite_classification`.
-2. **Plate layout** — plate type (384/96), margin, row step, column step feed
-   `plate.acceptable_wells`. Two views: `plate.default_layout` (well names, allowed ones
-   green) and `plate.sample_layout` (classes placed into allowed wells in **sorted** order,
-   optionally randomized; returns the classes that did not fit).
-   "Confirm and use this plate layout" → `plate.layout_to_saw` → `qc.validate_saw`.
-2.2 **Plate rendering is shared.** `ui_shared.plate_settings_step` is the only place plate
-   options live (type, margin, row/column spacing, randomize) and
-   `ui_shared.plate_preview` is the only plate renderer, so both workflows show the same
-   menu and the same table (`decisions.md` 045). The one remaining difference is
-   deliberate: the annotations workflow keeps its **Confirm** button and custom
-   samples-and-wells upload, because there the user maps classes to wells themselves; the
-   cell workflow derives `class_r<replicate>` groups from the budgets and assigns them
-   automatically, so there is nothing to confirm.
-2.3 **Custom samples-and-wells upload** — overrides the generated layout.
+2. **Plate layout** — `ui_plates.settings_step` is the only place plate options live (type,
+   margin, row/column spacing, start well, randomize), feeding `plate.acceptable_wells`, and
+   `plate.assign_to_plates` places the samples — sorted, so one plate is exactly the old
+   `sample_layout`/`assign_wells` layout. No *Confirm* button any more, for any method: the plate
+   updates live (078). `ui_shared.plate_preview` is the only plate renderer (045).
+2.3 **Custom samples-and-wells upload** — an expander in the Plates stage, for every method;
+   overrides the generated layout and uses one plate.
    `plate.parse_saw_file` reads a `.txt`/`.json` containing a **Python dict literal** and
    `ast.literal_eval`s it (trailing commas fine, `//` comments not). Raises
    `SawParseError` with a specific reason. Sets `use_plate_wells = False`.
@@ -225,10 +242,10 @@ categoricals × replicate count, cycling 6 hard-coded colours as Java signed int
   the radio is always user-changeable, and legacy is the default before any file is loaded.
   Verified on both demo files (`Single_cells.geojson` → cells, `TD_01…` → legacy).
 - **The scale is estimated, not asked for, wherever the file allows it** (`decisions.md` 056).
-  `ui_shared.resolve_pixel_size()` returns the value and its source: a typed override wins,
+  `ui_slides.resolve_pixel_size(slide)` returns the value and its source: a typed override wins,
   otherwise the value derived from QuPath's own measurements when the file was read, otherwise
   nothing. The class table just shows areas without the user entering anything.
-- `ui_shared.pixel_size_control()` is a compact input that sits **beside the area budget
+- `ui_slides.scale_control(context)` is a compact input (a one-column table with several slides) that sits **beside the area budget
   control**, not in a step of its own — that is the only thing the scale feeds, and users were
   confused about why it was being asked for (`decisions.md` 057). It reports where the value came
   from, warns when a typed value disagrees with the file by more than 5%, and warns when the
@@ -437,9 +454,9 @@ Both workflows expose the same two, in the shared export step.
 ## Regions: the cellular-neighbourhood workflow
 
 `regions.py` turns classified cells into **regions** — contiguous areas of tissue belonging to
-one class — and `packing.py` fills those regions with circles. `ui_packing.py` is the workflow.
+one class — and `packing.py` fills those regions with circles. `ui_collect_regions.py` is the method.
 
-**Step order: 4 classes, 5 regions, 6 what-to-collect, 7 plate, 8 export.** The collection step
+**Order within Samples: classes, regions, what-to-collect; then the Plates and Cut stages.** The collection step
 comes *before* the plate on purpose — how much tissue per replicate and how many replicates are
 exactly what the plate has to accommodate, so deciding them first means the plate is shown once,
 already correct, instead of being redrawn under the user while they tune circle settings
@@ -455,8 +472,7 @@ grey where it is not, which is the only place the app shows a user what they act
 Step 5 draws the regions. Step 6's table is too wide for a third of the page, so its picture goes
 directly below instead (`decisions.md` 071).
 
-`class_selection_step` owns step 4's picture, so the cell workflow gets it too; `ui_cells`
-no longer has its own `overview_step`.
+`ui_samples.class_step` owns the classes picture, so every method gets it.
 
 **Step 6 is one table, then the picture.** Every number the user sets is a property of one
 class, so they live in one `st.data_editor` row per class — replicates, µm² per replicate,
@@ -471,7 +487,7 @@ sat between the settings and the picture and pushed the two apart, which is the 
 is arranged to avoid. Every figure it carried is in the per-replicate table below
 (`decisions.md` 071).
 
-**No `st.fragment` here**, unlike the cell workflow. A fragment only reruns itself, so nothing
+**No `st.fragment` here**, nor in any method since 078. A fragment only reruns itself, so nothing
 below it re-executes — which would leave the plate and the export showing a stale collection,
 the exact trap `decisions.md` 051 describes. With the collection step above the plate the
 fragment has to go, and the caches on the projection and the packing are what keep a full rerun
@@ -632,7 +648,7 @@ Regions have no QuPath object behind them, but `sanitize_for_qupath` and the pla
 need `id`, `objectType` and `classification`. `geojson.synthesize_qupath_columns` adds them:
 positional ids (`region-000001`), `objectType="annotation"`, and the `classification` value
 QuPath wrote for that class, so colours survive the round trip. Called inside
-`ui_packing._cached_projection`, so every later step already holds an exportable frame.
+`ui_collect_regions._cached_projection`, so every later step already holds an exportable frame.
 
 ### Measured cost
 
@@ -646,7 +662,7 @@ Projection, on a MacBook, after the skips below:
 | 150 000 | 34 500 | 8.4 s |
 
 Cached on the file fingerprint and the reach, so a rerun costs nothing. Above roughly 60 000
-cells the step is noticeably slow and `ui_shared._report_scale` already warns from 40 000
+cells the step is noticeably slow and `ui_shared.report_scale` already warns from 40 000
 (`decisions.md` 051).
 
 **Where the time goes, and what was skipped.** Profiled at 60 000 cells: the cap intersection
@@ -778,9 +794,9 @@ the worst of this: on the real export the loss is 6% of the collected area. `smo
 computes it, and step 8 warns above 5% and states it as a caption below that. The remedies
 offered are the real ones — a larger smallest circle, or a lower smoothing tolerance.
 
-## Several slides (library only, round five PR 2)
+## Several slides (round five)
 
-`slides.py` — no UI yet. Shapes of the same class on different slides pool into the same samples
+`slides.py`, used by every method. Shapes of the same class on different slides pool into the same samples
 (`decisions.md` 075).
 
 - `read_slides(sources)` reads paths or uploads, expanding a `.zip` in memory (skips non-GeoJSON
@@ -804,7 +820,7 @@ offered are the real ones — a larger smallest circle, or a lower smoothing tol
 - `PooledSelection.by_sample()` is the sample sheet's core: per class and replicate, what each
   slide gave, the total and the request.
 
-## Several plates (library only, round five PR 3)
+## Several plates (round five)
 
 - `plate.assign_to_plates(groups, wells, n_plates, distribution, randomize, seed, start_well)`
   returns `{group: (plate, well)}`, plates named `P1`, `P2`, …. **One plate returns exactly
@@ -836,28 +852,23 @@ Initialised in the block at the top of `streamlit_app.py`. Any new key belongs h
 | --- | --- |
 | `session_id` | uuid4 string, shown to the user for bug reports, names the log in the zip |
 | `log_file_path` | temp `.log` path; loguru sink, shipped inside the download zip |
-| `workflow` | `'legacy'` \| `'cells'` \| `'regions'` — which workflow the router dispatched to |
-| `pixel_size_um` | µm per pixel, entered by the user; `None` until they do |
-| `selected_classes` | classes the cell workflow will collect; `None` means not chosen yet |
-| `budget_mode` | `'cells'` \| `'area'` — what the per-replicate amount counts |
+| `slides` | list of `slides.Slide` from the last upload: shapes, calibration pool, report, file name |
+| `upload_key` | `(name, size)` of every uploaded file; a change re-reads and clears derived keys |
+| `calibration` | `{slide: [name1, name2, name3]}` chosen calibration points, order matters |
+| `pixel_size_by_slide` | `{slide: µm/px}` typed scales; absent means the file's estimate, or none |
+| `workflow` | `'legacy'` \| `'cells'` \| `'regions'` — which collection method Stage 2 runs |
+| `selected_classes` | classes to collect; `None` means not chosen yet |
+| `budget_mode` | `'cells'` \| `'area'` — what the per-replicate amount counts (selected shapes) |
 | `budgets` | list of `ClassBudget` as dicts: class, replicates, per-replicate amount |
 | `minimum_area_um2` | per-class minimum collectable area in µm²; drives the pre-measurement filter |
 | `region_params` | `RegionParams` as a dict: the radius cap that produced the current regions |
 | `packing_params` | `PackingParams` as a dict: sizes, gap, effort and seed of the last packing |
 | `region_budgets` | list of `ClassPacking` as dicts: per class, replicates, µm² per replicate, circle size range, gap |
-| `view_mode` | `'default'` \| `'samples'` — which plate table is rendered |
-| `gdf` | the working GeoDataFrame (points removed, `classification_name` added) |
-| `geojson_report` | `GeojsonReport` from the last read, re-rendered on every rerun |
-| `calibration_points` | `{name: [x, y]}` calibration-point pool from the geojson |
-| `calibs` | `[name1, name2, name3]` selected calibration point names, order matters |
-| `calib_array` | 3×2 numpy array of the selected points, passed to `py-lmd` |
-| `saw` | samples-and-wells dict `{class_name: well}` |
-| `use_plate_wells` | True if `saw` came from the plate builder, False if uploaded |
-| `file_name` | uploaded geojson filename; change of name triggers reprocessing |
-| `plate_df` | the displayed plate DataFrame |
-| `plate_gen_params` | dict of plate/margin/step/randomize; change triggers regeneration |
-| `show_saw_uploader` | whether the custom-saw uploader is visible |
+| `slide_strategy`, `slide_order` | how amounts are split between slides, and the order for priority |
+| `n_plates`, `plate_distribution` | plates in use and `'balanced'` \| `'sequential'` |
+| `cut_order` | `'slide'` \| `'plate'` — order of the cutting instructions and download folders |
 | `zip_buffer`, `bundle_name` | the download bundle and its filename |
+| `bundle_signature` | hash of what built the bundle; a mismatch withdraws the download |
 | `collection_image` | path to the QC image of the last processed collection |
 
 ## Domain constants and conventions
@@ -1048,16 +1059,14 @@ yields) with these figures and instructions for running locally (`decisions.md` 
   107 MB of a 383 MB frame.
 - **The plan builders copy only the columns a plan needs** (`model.PLAN_SOURCE_COLUMNS`), not the
   whole frame. A full copy cost 99 MB at a million shapes.
-- **Step 8 is an `st.fragment`**, so changing the selection mode, seed or neighbour distance
-  re-runs only steps 8–9 rather than the whole script. The export lives inside the fragment, so
-  nothing downstream can be left showing a stale selection. Note Streamlit forbids combining
-  `@st.fragment` and caching on the *same* function — the caches here wrap different functions.
+- ~~Step 8 is an `st.fragment`~~ — **removed in 078.** Selection now runs above the plate, and a
+  fragment would leave the Plates and Cut stages stale; the selection cache carries the cost.
 - Together these took the million-shape peak from 2 689 MB to **2 207 MB**, and
   `build_collection` from 7.6 s to 1.1 s (the latter mostly by defaulting to hilbert).
 
 ## Test suite
 
-`tests/`, run with `uv run pytest` — 282 tests in about 7 seconds. `-m "not slow"` skips the
+`tests/`, run with `uv run pytest` — 305 tests in about 16 seconds. `tests/test_app.py` drives the whole page headlessly with Streamlit's `AppTest`, replacing the slide uploader with one that hands over demo files. `-m "not slow"` skips the
 golden gate for a fast loop. CI runs ruff, the suite and the harness on every push and PR
 (`.github/workflows/ci.yml`).
 

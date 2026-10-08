@@ -8,8 +8,21 @@ import pytest
 import streamlit
 from shapely.geometry import box as shapely_box
 
-from qupath_to_lmd import budget, geojson, plate, regions, selection, ui_cells, ui_packing, ui_shared
-from qupath_to_lmd.model import CLASS_NAME, plan_from_class_wells, plan_from_selection
+from qupath_to_lmd import (
+    budget,
+    geojson,
+    plate,
+    regions,
+    selection,
+    slides,
+    ui_collect_regions,
+    ui_cut,
+    ui_plates,
+    ui_samples,
+    ui_shared,
+    ui_slides,
+)
+from qupath_to_lmd.model import CLASS_NAME
 
 
 class Stopped(Exception):
@@ -104,19 +117,31 @@ def _load(fake_streamlit, path, keep_points=3):
     json.dump(document, handle)
     handle.close()
 
-    gdf, calibration_points, report = geojson.read_and_qc(handle.name)
-    fake_streamlit.state.update(gdf=gdf, calibration_points=calibration_points, geojson_report=report,
-                               calibs=None, calib_array=None, file_name="test.geojson")
-    return gdf
+    (slide,) = slides.read_slides([handle.name])
+    fake_streamlit.state.update(pixel_size_by_slide={})
+    return slide
+
+
+def _context(*loaded):
+    """A slides context with each slide calibrated on its first three points."""
+    calibration = {}
+    for slide in loaded:
+        names = list(slide.calibration_points)[:3]
+        calibration[slide.name] = (names, None)
+    return ui_slides.SlidesContext(slides=list(loaded), calibration=calibration)
+
+
+def _layout(assignment, plate_type="384"):
+    return ui_plates.PlateLayout(plate_type, {"margins": 1, "step_row": 1, "step_col": 1, "randomize": False}, assignment)
 
 
 @pytest.mark.parametrize("kept", [0, 1, 2])
 def test_fewer_than_three_calibration_points_stops_the_app(fake_streamlit, kept):
     """Without three points no cutting file can be meaningful, so this is one of the very few
     places the app refuses to continue rather than warning."""
-    _load(fake_streamlit, "demo_Qupath_project/Single_cells.geojson", keep_points=kept)
+    slide = _load(fake_streamlit, "demo_Qupath_project/Single_cells.geojson", keep_points=kept)
     with pytest.raises(Stopped):
-        ui_shared.calibration_step()
+        ui_slides.calibration_step([slide])
     assert fake_streamlit.errors, (
         f"With {kept} calibration points the app halted without explaining why. The user needs "
         "to be told to add points in QuPath."
@@ -127,31 +152,44 @@ def test_fewer_than_three_calibration_points_stops_the_app(fake_streamlit, kept)
 def test_a_degenerate_calibration_triangle_stops_the_app(fake_streamlit, monkeypatch):
     """py-lmd writes a valid-looking XML from three identical points, so nothing downstream
     would catch it."""
-    _load(fake_streamlit, "demo_Qupath_project/Single_cells.geojson")
-    first = list(fake_streamlit.state.calibration_points)[0]
-    coordinate = fake_streamlit.state.calibration_points[first]
-    fake_streamlit.state.calibration_points = dict.fromkeys(("a", "b", "c"), coordinate)
+    slide = _load(fake_streamlit, "demo_Qupath_project/Single_cells.geojson")
+    coordinate = next(iter(slide.calibration_points.values()))
+    slide.calibration_points = dict.fromkeys(("a", "b", "c"), coordinate)
     monkeypatch.setattr(streamlit, "selectbox", lambda label, options, index=0, **k: options[index])
 
     with pytest.raises(Stopped):
-        ui_shared.calibration_step()
+        ui_slides.calibration_step([slide])
     assert "triangle" in fake_streamlit.shown("errors").lower(), (
         f"A degenerate triangle should be explained as such; errors were: {fake_streamlit.errors}"
     )
 
 
 def test_three_valid_points_do_not_stop_the_app(fake_streamlit):
-    _load(fake_streamlit, "demo_Qupath_project/Single_cells.geojson")
-    ui_shared.calibration_step()
+    slide = _load(fake_streamlit, "demo_Qupath_project/Single_cells.geojson")
+    calibration = ui_slides.calibration_step([slide])
     assert not fake_streamlit.errors, f"A valid calibration raised errors: {fake_streamlit.errors}"
-    assert fake_streamlit.state.calib_array is not None
+    assert calibration[slide.name][1] is not None
+
+
+def test_a_hard_stop_on_one_of_several_slides_names_that_slide(fake_streamlit, monkeypatch):
+    """With several slides, "this file has no calibration points" does not say which file."""
+    good = _load(fake_streamlit, "demo_Qupath_project/Single_cells.geojson")
+    bad = _load(fake_streamlit, "demo_Qupath_project/TD_01_verysmall_mIF.geojson", keep_points=1)
+    bad.name = "slide_B"
+
+    monkeypatch.setattr(streamlit, "tabs", lambda names: [streamlit.container() for _ in names])
+    with pytest.raises(Stopped):
+        ui_slides.calibration_step([good, bad])
+    assert "slide_B" in fake_streamlit.shown("errors"), (
+        f"The stop did not name the slide lacking points: {fake_streamlit.errors}"
+    )
 
 
 def test_a_large_file_warns_about_running_locally(fake_streamlit):
     """A whole-slide export needs more memory than the hosted app has, so the user should be
     told before spending ten minutes finding out."""
     shapes = ui_shared.HOSTED_COMFORTABLE_SHAPES + 1
-    ui_shared._report_scale(shapes)
+    ui_shared.report_scale(shapes)
     assert fake_streamlit.warnings, "A file above the comfortable threshold produced no warning."
 
     shown = fake_streamlit.shown("warnings")
@@ -170,27 +208,25 @@ def test_a_large_file_warns_about_running_locally(fake_streamlit):
 
 def test_a_small_file_does_not_warn(fake_streamlit):
     """Warning on the ordinary case is how warnings stop being read."""
-    ui_shared._report_scale(ui_shared.HOSTED_COMFORTABLE_SHAPES - 1)
+    ui_shared.report_scale(ui_shared.HOSTED_COMFORTABLE_SHAPES - 1)
     assert not fake_streamlit.warnings, (
         f"A file below the threshold warned anyway: {fake_streamlit.warnings}"
     )
 
 
-def test_unselected_shapes_are_a_note_in_the_cell_workflow(fake_streamlit, cells, calibration):
+def test_unselected_shapes_are_a_note_in_the_cell_workflow(fake_streamlit, cells):
     """Most shapes are deliberately not selected — that is the point of the workflow. Warning
     about it fired on every single collection and trained users to ignore warnings."""
-    gdf, points, _report = cells
+    gdf, _points, _report = cells
     classes = sorted(set(gdf[CLASS_NAME]))
     budgets = [budget.ClassBudget(classes[0], 1, 3)]
-    result = selection.select(gdf, budgets, budget.BudgetMode.CELLS, selection.SelectionParams(seed=1), 0.3467)
-    wells = plate.acceptable_wells("384", margins=1)
-    plan, _saw = plan_from_selection(
-        gdf=gdf, replicate_of=result.replicate_of, wells=wells,
-        samples_and_wells=plate.assign_wells(budget.group_keys(budgets), wells),
-        calibration_names=list(points)[:3], calibration_array=calibration,
+    pooled = slides.select_across_slides(
+        {"A": gdf}, budgets, budget.BudgetMode.CELLS, selection.SelectionParams(seed=1), {"A": 0.3467}
     )
+    sample_set = slides.selected_samples({"A": gdf}, pooled, budgets, budget.BudgetMode.CELLS, {"A": 0.3467})
+    layout = _layout(plate.assign_to_plates(sample_set.samples, plate.acceptable_wells("384", margins=1)))
 
-    ui_shared._report_excluded(plan)
+    ui_cut._report_excluded(sample_set, layout)
     assert fake_streamlit.captions, "Shapes not selected should be noted quietly, not warned about."
     assert not fake_streamlit.warnings, (
         f"The cell workflow warned about its own intended outcome: {fake_streamlit.warnings}"
@@ -198,75 +234,67 @@ def test_unselected_shapes_are_a_note_in_the_cell_workflow(fake_streamlit, cells
     assert "as intended" in fake_streamlit.shown("captions")
 
 
-def test_classes_absent_from_the_scheme_warn_in_the_annotations_workflow(fake_streamlit, cells, calibration):
+def test_classes_left_out_warn_when_collecting_whole_shapes(fake_streamlit, cells):
     """There it usually means the user forgot a class, which is worth interrupting for."""
-    gdf, points, _report = cells
+    gdf, _points, _report = cells
     classes = sorted(set(gdf[CLASS_NAME]))
-    plan = plan_from_class_wells(
-        gdf=gdf, samples_and_wells={classes[0]: "C3"},
-        calibration_names=list(points)[:3], calibration_array=calibration,
-    )
-    ui_shared._report_excluded(plan)
-    assert fake_streamlit.warnings, (
-        "Classes missing from the samples-and-wells scheme should warn in the annotations workflow."
-    )
+    sample_set = slides.whole_shape_samples({"A": gdf}, [classes[0]], {"A": None})
+    layout = _layout({classes[0]: ("P1", "C3")})
+    ui_cut._report_excluded(sample_set, layout)
+    assert fake_streamlit.warnings, "Classes left out of a whole-shapes collection should warn."
 
 
-def test_shapes_whose_group_got_no_well_always_warn(fake_streamlit, cells, calibration):
-    """These are shapes the user asked to collect that will not be cut, in either workflow."""
-    gdf, points, _report = cells
+def test_shapes_whose_sample_got_no_well_always_warn(fake_streamlit, cells):
+    """These are shapes the user asked to collect that will not be cut, in any method."""
+    gdf, _points, _report = cells
     classes = sorted(set(gdf[CLASS_NAME]))
     budgets = [budget.ClassBudget(name, 2, 2) for name in classes]
-    result = selection.select(gdf, budgets, budget.BudgetMode.CELLS, selection.SelectionParams(seed=1), 0.3467)
-    plan, _saw = plan_from_selection(
-        gdf=gdf, replicate_of=result.replicate_of, wells=["B2"],
-        samples_and_wells=plate.assign_wells(budget.group_keys(budgets), ["B2"]),
-        calibration_names=list(points)[:3], calibration_array=calibration,
+    pooled = slides.select_across_slides(
+        {"A": gdf}, budgets, budget.BudgetMode.CELLS, selection.SelectionParams(seed=1), {"A": 0.3467}
     )
-    ui_shared._report_excluded(plan)
+    sample_set = slides.selected_samples({"A": gdf}, pooled, budgets, budget.BudgetMode.CELLS, {"A": 0.3467})
+    layout = _layout(plate.assign_to_plates(sample_set.samples, ["B2"]))
+    ui_cut._report_excluded(sample_set, layout)
     assert any("no well" in w for w in fake_streamlit.warnings), (
-        f"Groups that got no well must be warned about; warnings were: {fake_streamlit.warnings}"
+        f"Samples that got no well must be warned about; warnings were: {fake_streamlit.warnings}"
     )
 
 
 def test_the_workflow_suggestion_follows_the_object_types(fake_streamlit, monkeypatch):
     """A file of cells should default to the cell workflow, and annotations to the other, but
     both remain changeable because a file can contain both."""
-    monkeypatch.setattr(streamlit, "radio", lambda label, options, index=0, **k: options[index])
-    fake_streamlit.state.workflow = "legacy"
-
-    _load(fake_streamlit, "demo_Qupath_project/Single_cells.geojson")
-    assert ui_cells and ui_shared.workflow_step() == "cells", (
-        "A file of 121 cells should suggest the cell workflow."
+    cells_slide = _load(fake_streamlit, "demo_Qupath_project/Single_cells.geojson")
+    assert ui_samples._suggest(_context(cells_slide)) == "cells", (
+        "A file of 121 cells should suggest selecting shapes."
     )
-
-    _load(fake_streamlit, "demo_Qupath_project/TD_01_verysmall_mIF.geojson")
-    assert ui_shared.workflow_step() == "legacy", (
-        "A file of annotations only should suggest the annotations workflow."
+    annotations = _load(fake_streamlit, "demo_Qupath_project/TD_01_verysmall_mIF.geojson")
+    assert ui_samples._suggest(_context(annotations)) == "legacy", (
+        "A file of annotations only should suggest collecting whole shapes."
     )
 
 
 def test_the_shape_fingerprint_changes_when_classes_are_exploded(fake_streamlit, cells_gdf):
     """Caches key off this. A filename alone would serve a stale selection after exploding,
     because exploding rewrites the class names in place."""
-    fake_streamlit.state.file_name = "a.geojson"
-    before = ui_shared.shape_fingerprint(cells_gdf)
-    after = ui_shared.shape_fingerprint(geojson.explode_classes(cells_gdf, ["single_cells_demo"]))
+    def fingerprint(gdf, file_name):
+        slide = slides.Slide("A", gdf, {}, geojson.GeojsonReport(), source_file=file_name)
+        return ui_slides.SlidesContext([slide], {"A": ([], None)}).fingerprint()
+
+    before = fingerprint(cells_gdf, "a.geojson")
+    after = fingerprint(geojson.explode_classes(cells_gdf, ["single_cells_demo"]), "a.geojson")
     assert before != after, (
         "Exploding a class did not change the cache fingerprint, so a cached selection from "
         "before the explode would be reused."
     )
-    fake_streamlit.state.file_name = "b.geojson"
-    assert ui_shared.shape_fingerprint(cells_gdf) != before, "A different file gave the same fingerprint."
+    assert fingerprint(cells_gdf, "b.geojson") != before, "A different file gave the same fingerprint."
 
 
 def test_the_scale_is_estimated_when_the_file_allows_it(fake_streamlit):
     """The estimate has been right on every file where it could be computed, and the input was
     the step users stumbled on. So where measurements exist the app uses them and says so."""
-    _load(fake_streamlit, "demo_Qupath_project/Single_cells.geojson")
-    fake_streamlit.state.pixel_size_um = None
+    slide = _load(fake_streamlit, "demo_Qupath_project/Single_cells.geojson")
 
-    value, source = ui_shared.resolve_pixel_size()
+    value, source = ui_slides.resolve_pixel_size(slide)
     assert source == "estimated", (
         f"This file carries QuPath measurements, so the scale should be estimated; got {source!r}."
     )
@@ -275,10 +303,10 @@ def test_the_scale_is_estimated_when_the_file_allows_it(fake_streamlit):
 
 def test_a_typed_scale_overrides_the_estimate(fake_streamlit):
     """The estimate is a default, not a decision the app makes for the user."""
-    _load(fake_streamlit, "demo_Qupath_project/Single_cells.geojson")
-    fake_streamlit.state.pixel_size_um = 0.5
+    slide = _load(fake_streamlit, "demo_Qupath_project/Single_cells.geojson")
+    fake_streamlit.state.pixel_size_by_slide = {slide.name: 0.5}
 
-    value, source = ui_shared.resolve_pixel_size()
+    value, source = ui_slides.resolve_pixel_size(slide)
     assert (value, source) == (0.5, "entered"), (
         f"A typed scale must win over the estimate; resolver returned {value} from {source!r}."
     )
@@ -287,10 +315,9 @@ def test_a_typed_scale_overrides_the_estimate(fake_streamlit):
 def test_no_scale_is_available_for_a_file_without_measurements(fake_streamlit):
     """Annotation exports carry no areas, so there is nothing to estimate from and the app must
     fall back to asking rather than guessing."""
-    _load(fake_streamlit, "demo_Qupath_project/TD_01_verysmall_mIF.geojson")
-    fake_streamlit.state.pixel_size_um = None
+    slide = _load(fake_streamlit, "demo_Qupath_project/TD_01_verysmall_mIF.geojson")
 
-    value, source = ui_shared.resolve_pixel_size()
+    value, source = ui_slides.resolve_pixel_size(slide)
     assert (value, source) == (None, "none"), (
         f"With no measurements there is nothing to estimate; resolver returned {value} from {source!r}."
     )
@@ -299,11 +326,10 @@ def test_no_scale_is_available_for_a_file_without_measurements(fake_streamlit):
 def test_a_wide_implied_spread_is_warned_about(fake_streamlit):
     """A scale that disagrees between objects suggests the export mixes images or was rescaled,
     which makes every area suspect."""
-    _load(fake_streamlit, "demo_Qupath_project/Single_cells.geojson")
-    report = fake_streamlit.state.geojson_report
+    report = _load(fake_streamlit, "demo_Qupath_project/Single_cells.geojson").report
     report.pixel_size_spread = ui_shared.WIDE_SPREAD * 2
 
-    ui_shared._report_pixel_size(0.3467, "estimated", 0.3467, report)
+    ui_shared.report_pixel_size(0.3467, "estimated", 0.3467, report)
     assert any("varies by" in w for w in fake_streamlit.warnings), (
         f"A {report.pixel_size_spread:.0%} spread should be warned about; warnings were "
         f"{fake_streamlit.warnings}"
@@ -312,10 +338,9 @@ def test_a_wide_implied_spread_is_warned_about(fake_streamlit):
 
 def test_a_typed_scale_that_disagrees_with_the_file_is_warned_about(fake_streamlit):
     """A 2x error in scale is a 4x error in every area, so this is worth interrupting for."""
-    _load(fake_streamlit, "demo_Qupath_project/Single_cells.geojson")
-    report = fake_streamlit.state.geojson_report
+    report = _load(fake_streamlit, "demo_Qupath_project/Single_cells.geojson").report
 
-    ui_shared._report_pixel_size(3.467, "entered", report.implied_pixel_size_um, report)
+    ui_shared.report_pixel_size(3.467, "entered", report.implied_pixel_size_um, report)
     assert any("×" in w or "x what this file implies" in w for w in fake_streamlit.warnings), (
         f"A ten-fold disagreement should warn; warnings were {fake_streamlit.warnings}"
     )
@@ -386,7 +411,7 @@ def test_a_class_with_too_few_regions_warns_and_still_continues(fake_streamlit):
     )
     replicates = {"Tumor": 2, "Stroma": 3}
     replicate_of = regions.deal_patches(patches, replicates)
-    ui_packing._report_starved_replicates(patches, replicates, replicate_of)
+    ui_collect_regions.report_starved_replicates({"A": patches}, replicates, {"A": replicate_of})
 
     shown = fake_streamlit.shown("warnings")
     assert "fewer regions than replicates" in shown, (
@@ -428,7 +453,7 @@ def test_a_replicate_that_could_not_be_filled_warns_and_still_exports(fake_strea
     (`decisions.md` 003).
     """
     result, _params, requests = _packed(area=10_000_000, max_attempts=150)
-    ui_packing._report_packing(result, requests)
+    ui_collect_regions.report_packing(result, requests)
 
     shown = fake_streamlit.shown("warnings")
     assert "could not be filled" in shown, (
@@ -441,7 +466,7 @@ def test_a_replicate_that_could_not_be_filled_warns_and_still_exports(fake_strea
 def test_a_filled_replicate_does_not_warn(fake_streamlit):
     """Warning on the ordinary case is how warnings stop being read."""
     result, _params, requests = _packed(area=2_000)
-    ui_packing._report_packing(result, requests)
+    ui_collect_regions.report_packing(result, requests)
     assert "could not be filled" not in fake_streamlit.shown("warnings"), (
         f"A fully-filled replicate warned anyway: {fake_streamlit.shown('warnings')!r}"
     )
@@ -455,7 +480,7 @@ def test_regions_too_narrow_for_a_circle_are_reported(fake_streamlit):
     from qupath_to_lmd import packing
 
     result = packing.PackingResult(n_regions_too_small=17)
-    ui_packing._report_packing(result, [packing.ClassPacking("Tumor", 1, 100.0)])
+    ui_collect_regions.report_packing(result, [packing.ClassPacking("Tumor", 1, 100.0)])
     shown = fake_streamlit.shown("warnings")
     assert "too narrow to hold even one circle" in shown and "17" in shown, (
         f"Skipped regions were not reported with their count. Shown: {shown!r}"
@@ -471,7 +496,7 @@ def test_the_smoothing_loss_is_warned_about_when_it_is_large(fake_streamlit):
     result, _params, requests = _packed(
         area=4_000, min_circle_area_um2=100, max_circle_area_um2=150
     )
-    ui_packing._report_packing(result, requests)
+    ui_collect_regions.report_packing(result, requests)
     shown = fake_streamlit.shown("warnings") + " " + fake_streamlit.shown("captions")
     assert "moothing" in shown, (
         "Nothing was said about smoothing taking area off the circles, so the amounts shown are "
@@ -505,3 +530,37 @@ def test_only_number_columns_are_given_a_number_format(fake_streamlit):
         f"Amounts came out as {data['Collected (µm²)'].tolist()}; they should be whole numbers, "
         "since a fraction of a square micrometre is noise in a number the user has to read."
     )
+
+
+def test_slide_controls_do_not_appear_for_one_slide(fake_streamlit, monkeypatch):
+    """One slide and one plate must look as the app always has (`decisions.md` 076)."""
+    def no_radio(*args, **kwargs):
+        raise AssertionError("The slide strategy was offered with only one slide.")
+
+    monkeypatch.setattr(streamlit, "radio", no_radio)
+    slide = _load(fake_streamlit, "demo_Qupath_project/Single_cells.geojson")
+    strategy, order = ui_samples.strategy_control(_context(slide), key="test")
+    assert order == [slide.name]
+
+
+def test_plate_distribution_does_not_appear_for_one_plate(fake_streamlit, monkeypatch):
+    def no_radio(*args, **kwargs):
+        raise AssertionError("Plate distribution was offered with only one plate.")
+
+    monkeypatch.setattr(streamlit, "radio", no_radio)
+    monkeypatch.setattr(streamlit, "number_input", lambda label, value=None, **k: value)
+    wells = plate.acceptable_wells("384", margins=1)
+    n_plates, _distribution = ui_plates._plates_control(
+        ["Tumor_r1", "Tumor_r2"], {"usable": wells, "first_plate": wells}
+    )
+    assert n_plates == 1
+
+
+def test_more_samples_than_a_plate_holds_ask_for_a_second_plate(fake_streamlit, monkeypatch):
+    """The default number of plates is the fewest that hold every sample."""
+    monkeypatch.setattr(streamlit, "number_input", lambda label, value=None, **k: value)
+    monkeypatch.setattr(streamlit, "radio", lambda label, options, **k: options[0])
+    wells = plate.acceptable_wells("96", margins=3, step_col=2)
+    samples = [f"Tumor_r{n}" for n in range(1, len(wells) + 2)]
+    n_plates, _distribution = ui_plates._plates_control(samples, {"usable": wells, "first_plate": wells})
+    assert n_plates == 2, f"{len(samples)} samples on {len(wells)}-well plates defaulted to {n_plates} plate(s)."

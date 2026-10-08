@@ -344,8 +344,7 @@ def build_experiment_bundle(
         written: set[str] = set()
         for cut in cuts:
             archive.writestr(cut.path(order), cut.result.xml)
-            folder = str(Path(cut.path(order)).parent)
-            archive.write(cut.result.image_path, f"{folder}/{cut.slide}__{cut.plate}.png")
+            archive.write(cut.result.image_path, str(Path(cut.path(order)).with_suffix(".png")))
             if cut.slide in written:
                 continue
             written.add(cut.slide)
