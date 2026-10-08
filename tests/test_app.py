@@ -84,6 +84,23 @@ def test_one_annotation_file_through_the_app_matches_the_golden_reference(monkey
     assert files["TD_01_verysmall_mIF_384_wellplate.csv"] == (GOLDEN / "annotations.csv").read_bytes()
 
 
+def test_one_annotation_file_into_a_tube_holder_cuts_into_tubes(monkeypatch):
+    """Choosing the tube holder in Stage 3 reaches the .xml as letter CapIDs, end to end."""
+    def tubes(app):
+        app.selectbox(key="plate_type").set_value("tubes")
+
+    app = _run(monkeypatch, ["TD_01_verysmall_mIF.geojson"], actions=[tubes])
+    assert not [box for box in app.number_input if "Margin" in str(box.label)], (
+        "The tube holder still shows a margin control, which does nothing on four tubes."
+    )
+    files = _contents(app)
+    assert files["TD_01_verysmall_mIF.xml"] == (GOLDEN / "tubes.xml").read_bytes(), (
+        "The app's tube holder .xml differs from tools/golden/tubes.xml, so choosing tubes in the "
+        "app does not cut what the library cuts into tubes."
+    )
+    assert files["TD_01_verysmall_mIF_tubes.csv"] == (GOLDEN / "tubes.csv").read_bytes()
+
+
 def test_two_slides_on_two_plates_give_four_cutting_files(monkeypatch):
     def two_plates(app):
         key = next(w.key for w in app.number_input if w.key and w.key.startswith("n_plates_"))
@@ -93,13 +110,13 @@ def test_two_slides_on_two_plates_give_four_cutting_files(monkeypatch):
     files = _contents(app)
     xmls = sorted(name for name in files if name.endswith(".xml"))
     assert len(xmls) == 4, f"Two slides on two plates should give four .xml files, got {xmls}."
-    for expected in ("samples.csv", "plate_P1.csv", "plate_P2.csv", "COLLECTION_PLAN.txt"):
+    for expected in ("samples.csv", "Plate1.csv", "Plate2.csv", "COLLECTION_PLAN.txt"):
         assert expected in files, f"{expected} is missing from the experiment download."
 
 
 def test_regions_across_two_slides_run_to_a_download(monkeypatch):
     files = _contents(_run(monkeypatch, ["Single_cells.geojson", "Single_cells.geojson"], "regions"))
-    assert {"slide_Single_cells/Single_cells__P1.xml", "slide_Single_cells_2/Single_cells_2__P1.xml"} <= set(files), (
+    assert {"slide_Single_cells/Single_cells__Plate1.xml", "slide_Single_cells_2/Single_cells_2__Plate1.xml"} <= set(files), (
         f"Each copy of the slide should get its own .xml: {sorted(files)}"
     )
 
@@ -132,3 +149,21 @@ def test_extras_are_a_page_of_their_own_not_the_sidebar(monkeypatch):
     app.switch_page("app_pages/extras.py").run()
     assert not app.exception, f"The Extras page raised: {[e.value for e in app.exception]}"
     assert any("categoricals" in block.value for block in app.markdown), "The Extras page shows no classes generator."
+
+
+def test_a_look_at_the_tube_holder_does_not_reset_the_plate_margin(monkeypatch):
+    """Margin and spacing are hidden for holders, and Streamlit forgets a hidden widget's value."""
+    app = _start(monkeypatch, ["TD_01_verysmall_mIF.geojson"])
+    _confirm_calibration(app)
+    app.number_input(key="plate_margin").set_value(2).run()
+    app.number_input(key="plate_step_col").set_value(2).run()
+    app.selectbox(key="plate_type").set_value("tubes").run()
+    app.selectbox(key="plate_type").set_value("384").run()
+    assert not app.exception, f"The app raised: {[e.value for e in app.exception]}"
+    assert app.number_input(key="plate_margin").value == 2 and app.number_input(key="plate_step_col").value == 2, (
+        "Switching to the tube holder and back reset the plate margin or spacing, so the layout "
+        "silently uses the edge wells the user had chosen to avoid."
+    )
+    assert not [w for w in app.warning if "Session State" in str(w.value)], (
+        f"Streamlit warned about the restored values: {[w.value for w in app.warning]}"
+    )

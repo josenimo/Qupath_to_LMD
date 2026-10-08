@@ -89,6 +89,16 @@ CASES = {
         "replicates": 3,
         "per_replicate": 2,
     },
+    # a tube holder: positions are letters, so the CapIDs and the one-column map differ
+    "tubes": {"source": DEMO / "TD_01_verysmall_mIF.geojson", "plate_type": "tubes"},
+    # strip holders: nine samples need two 8-well strips, so collector names reach the files
+    "strips": {
+        "kind": "plates",
+        "source": DEMO / "multiclass_cells.geojson",
+        "replicates": 3,
+        "per_replicate": 2,
+        "plate_type": "strip",
+    },
 }
 
 
@@ -232,8 +242,8 @@ def run_slides_case(sources, replicates=1, per_replicate=10, plate_type="384", m
     return artefacts
 
 
-def run_plates_case(source, replicates=1, per_replicate=1) -> dict[str, str]:
-    """Drive one slide onto two balanced plates and return each plate's XML and plate map."""
+def run_plates_case(source, replicates=1, per_replicate=1, plate_type="96") -> dict[str, str]:
+    """Drive one slide onto two balanced collectors and return each one's XML and map."""
     read = slides.read_slides([str(source)])
     pools = {slide.name: slide.gdf for slide in read}
     scales = dict.fromkeys(pools)
@@ -242,20 +252,35 @@ def run_plates_case(source, replicates=1, per_replicate=1) -> dict[str, str]:
     pooled = slides.select_across_slides(
         pools, budgets, budget.BudgetMode.CELLS, selection.SelectionParams(), scales
     )
-    wells = plate.acceptable_wells(plate="96", margins=3, step_col=2)
+    if plate_type == "96":
+        wells = plate.acceptable_wells(plate="96", margins=3, step_col=2)
+    else:
+        wells = plate.acceptable_wells(plate=plate_type)
     groups = budget.group_keys(budgets)
-    assignment = plate.assign_to_plates(groups, wells, plate.plates_needed(len(groups), len(wells)))
+    assignment = plate.assign_to_plates(
+        groups, wells, plate.plates_needed(len(groups), len(wells)), plate=plate_type
+    )
     names = list(read[0].calibration_points)[:3]
     calibration = {
         read[0].name: (names, qc.triangle_qc(read[0].gdf, read[0].calibration_points, names).calibration_array)
     }
     samples = slides.selected_samples(pools, pooled, budgets, budget.BudgetMode.CELLS, scales)
-    cuts = slides.cuts_for_experiment(samples, read, assignment, calibration, plate="96", session_id="golden")
+    cuts = slides.cuts_for_experiment(
+        samples, read, assignment, calibration, plate=plate_type, session_id="golden"
+    )
     artefacts = {}
     for cut in cuts:
-        artefacts[f"{cut.plate}.xml"] = cut.result.xml
-        artefacts[f"{cut.plate}.csv"] = cut.result.csv
+        artefacts[f"{_golden_label(cut.plate)}.xml"] = cut.result.xml
+        artefacts[f"{_golden_label(cut.plate)}.csv"] = cut.result.csv
     return artefacts
+
+
+def _golden_label(name: str) -> str:
+    """`Plate1` is filed as `P1`.
+
+    The reference files predate collector names, and renaming them would be editing tools/golden/.
+    """
+    return f"P{name[len('Plate'):]}" if name.startswith("Plate") else name
 
 
 def _run(kind: str = "annotations", **kwargs) -> dict[str, str]:

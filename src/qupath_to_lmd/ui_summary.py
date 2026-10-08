@@ -1,6 +1,6 @@
 """The experiment at a glance, in the sidebar, updated as each stage completes.
 
-One line says what the experiment is — slides, samples, plates — and a checklist says how far it
+One line says what the experiment is — slides, samples, collectors — and a checklist says how far it
 has got. It stays in view while the page scrolls, so whatever the user changes, they can see what
 it did to the experiment (`decisions.md` 076).
 """
@@ -9,8 +9,10 @@ from dataclasses import dataclass, field
 
 import streamlit as st
 
-STAGES = ("Slides", "Samples", "Plates", "Cut")
-EMOJI = {"Slides": "🔬", "Samples": "🧬", "Plates": "🧫", "Cut": "✂️"}
+from qupath_to_lmd import plate
+
+STAGES = ("Slides", "Samples", "Collector", "Cut")
+EMOJI = {"Slides": "🔬", "Samples": "🧬", "Collector": "🧫", "Cut": "✂️"}
 
 
 @dataclass
@@ -50,10 +52,11 @@ class Summary:
 
     def plates(self, layout, n_samples: int) -> None:
         """Stage 3 is done."""
+        chosen = plate.collector(layout.plate_type)
         n = layout.n_plates
         placed = len(layout.assignment)
-        self.figures["plates"] = f"**{n} plate{'s' if n != 1 else ''}**"
-        self.lines["Plates"] = f"{placed} of {n_samples} samples placed on {n} × {layout.plate_type} well plate"
+        self.figures["plates"] = f"**{n} {chosen.noun}{'s' if n != 1 else ''}**"
+        self.lines["Collector"] = f"{placed} of {n_samples} samples placed on {n} × {chosen.label}"
         self._render()
 
     def cut(self, ready: bool) -> None:

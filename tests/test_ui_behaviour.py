@@ -564,3 +564,116 @@ def test_more_samples_than_a_plate_holds_ask_for_a_second_plate(fake_streamlit, 
     samples = [f"Tumor_r{n}" for n in range(1, len(wells) + 2)]
     n_plates, _distribution = ui_plates._plates_control(samples, {"usable": wells, "first_plate": wells})
     assert n_plates == 2, f"{len(samples)} samples on {len(wells)}-well plates defaulted to {n_plates} plate(s)."
+
+
+def _settings_for(plate_type, monkeypatch):
+    """Stage 3's settings with every widget at its default, and `plate_type` chosen."""
+    monkeypatch.setattr(streamlit, "selectbox", lambda *a, **k: plate_type)
+    monkeypatch.setattr(streamlit, "number_input", lambda label, value=None, **k: value)
+    monkeypatch.setattr(streamlit, "text_input", lambda *a, **k: "")
+    monkeypatch.setattr(streamlit, "toggle", lambda *a, **k: False)
+    return ui_plates.settings_step()
+
+
+def test_margin_and_spacing_are_not_offered_for_tubes(fake_streamlit, monkeypatch):
+    """On a holder of four tubes a margin or spacing would only leave tubes unused."""
+    offered = []
+    monkeypatch.setattr(streamlit, "selectbox", lambda *a, **k: "tubes")
+    monkeypatch.setattr(streamlit, "number_input", lambda label, value=None, **k: offered.append(label) or value)
+    monkeypatch.setattr(streamlit, "text_input", lambda *a, **k: "")
+    monkeypatch.setattr(streamlit, "toggle", lambda *a, **k: False)
+    settings = ui_plates.settings_step()
+    assert not [label for label in offered if "Margin" in label or "Space" in label], (
+        f"Margin or spacing was offered for a tube holder: {offered}. It does nothing there and "
+        "invites a user to think a tube is being skipped."
+    )
+    assert settings["usable"] == ["A", "B", "C", "D"]
+
+
+def test_several_collectors_warn_about_separate_cutting_runs(fake_streamlit, monkeypatch):
+    settings = _settings_for("tubes", monkeypatch)
+    samples = [f"Tumor_r{n}" for n in range(1, 14)]
+    assignment = plate.assign_to_plates(samples, settings["usable"], 4, plate="tubes")
+    ui_plates._capacity_report(samples, settings, 4, assignment)
+    assert "4 separate cutting runs" in fake_streamlit.shown("warnings"), (
+        "Thirteen samples need four tube holders, which is four runs with a holder change between "
+        f"each; the user was not told. Warnings: {fake_streamlit.warnings}"
+    )
+    assert "13 tubes" in fake_streamlit.shown("writes") and "4 tube holders" in fake_streamlit.shown("writes")
+
+
+def test_one_collector_does_not_warn_about_cutting_runs(fake_streamlit, monkeypatch):
+    settings = _settings_for("tubes", monkeypatch)
+    samples = ["Tumor_r1", "Tumor_r2", "Tumor_r3"]
+    assignment = plate.assign_to_plates(samples, settings["usable"], 1, plate="tubes")
+    ui_plates._capacity_report(samples, settings, 1, assignment)
+    assert "separate cutting runs" not in fake_streamlit.shown("warnings"), (
+        "One tube holder is one run; warning about several would teach users to ignore warnings."
+    )
+
+
+def test_hundreds_of_samples_on_tubes_do_not_exceed_the_collector_limit(fake_streamlit, monkeypatch):
+    """Streamlit raises when a number input's value is above its maximum."""
+    seen = {}
+    monkeypatch.setattr(streamlit, "number_input", lambda label, **k: seen.update(k) or k["value"])
+    monkeypatch.setattr(streamlit, "radio", lambda label, options, **k: options[0])
+    tubes = plate.acceptable_wells("tubes")
+    samples = [f"Tumor_r{n}" for n in range(1, 301)]
+    n_plates, _ = ui_plates._plates_control(samples, {"usable": tubes, "first_plate": tubes, "plate_type": "tubes"})
+    assert seen["value"] == 75 == n_plates
+    assert seen["max_value"] >= seen["value"], (
+        f"300 samples need 75 tube holders but the control stops at {seen['max_value']}; Streamlit "
+        "would raise and Stage 3 would not render."
+    )
+
+
+def test_a_file_for_plates_is_refused_when_tubes_are_chosen(fake_streamlit, monkeypatch):
+    import contextlib
+    import io
+
+    monkeypatch.setattr(streamlit, "expander", lambda *a, **k: contextlib.nullcontext())
+    monkeypatch.setattr(streamlit, "file_uploader", lambda *a, **k: io.BytesIO(b"{'P1': {'Tumor_r1': 'C3'}}"))
+    assert ui_plates._custom_assignment(["Tumor_r1"], "tubes") is None, (
+        "A plate file was accepted with a tube holder chosen; C3 does not exist on a tube holder."
+    )
+    assert "tube holder" in fake_streamlit.shown("errors"), (
+        f"The refusal does not say a tube holder is chosen: {fake_streamlit.errors}"
+    )
+
+
+def test_the_tube_caption_counts_tubes_on_the_named_holder(fake_streamlit, monkeypatch):
+    captions = []
+    monkeypatch.setattr(streamlit, "caption", lambda *a, **k: captions.append(str(a[0]) if a else ""))
+    monkeypatch.setattr(streamlit, "download_button", lambda *a, **k: None)
+    ui_shared.plate_preview(
+        {"a": "A", "b": "C"}, "tubes", wells=["A", "B", "C", "D"], key_suffix="t", plate_name="TubeHolder2"
+    )
+    caption = " ".join(captions)
+    assert "2 of 4 tubes in use on TubeHolder2" in caption, caption
+    assert "start at **B**" in caption, (
+        f"The caption should name tube B as the next free one: {caption!r}"
+    )
+
+
+def test_the_cutting_runs_count_the_collectors_that_receive_samples(fake_streamlit, monkeypatch):
+    """Sequential filling of four holders with five samples uses two; the warning must say two."""
+    settings = _settings_for("tubes", monkeypatch)
+    samples = [f"Tumor_r{n}" for n in range(1, 6)]
+    assignment = plate.assign_to_plates(
+        samples, settings["usable"], 4, plate.PlateDistribution.SEQUENTIAL, plate="tubes"
+    )
+    ui_plates._capacity_report(samples, settings, 4, assignment)
+    warnings = fake_streamlit.shown("warnings")
+    assert "2 separate cutting runs" in warnings and "4 separate" not in warnings, (
+        "Five samples filled two of four tube holders, but the warning counted the number box. "
+        f"The download has two .xml files, so the screen disagrees with it: {warnings}"
+    )
+
+
+def test_a_custom_file_on_one_holder_does_not_warn_about_several_runs(fake_streamlit, monkeypatch):
+    settings = _settings_for("tubes", monkeypatch)
+    assignment = {"Tumor_r1": ("TubeHolder1", "A"), "Tumor_r2": ("TubeHolder1", "B")}
+    ui_plates._capacity_report(["Tumor_r1", "Tumor_r2"], settings, 4, assignment)
+    assert "separate cutting runs" not in fake_streamlit.shown("warnings"), (
+        "An uploaded file puts everything on one tube holder, yet the warning speaks of several runs."
+    )

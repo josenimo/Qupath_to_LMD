@@ -31,7 +31,7 @@ DEFAULTS = {
     "region_budgets": None,
     "slide_strategy": None,
     "slide_order": None,
-    # Stage 3, Plates
+    # Stage 3, Collector
     "n_plates": None,
     "plate_distribution": None,
     # Stage 4, Cut
@@ -71,9 +71,9 @@ st.caption(
 )
 st.divider()
 
-#################################################
-### Four stages: slides, samples, plates, cut ###
-#################################################
+####################################################
+### Four stages: slides, samples, collector, cut ###
+####################################################
 # Each stage hands the next a plain object — slides, a SampleSet, a PlateLayout — so a stage
 # can change without the others knowing (`decisions.md` 078).
 

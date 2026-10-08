@@ -1900,3 +1900,62 @@ Jose's notes after clicking through 078.
   experiment summary only. Session state is shared, so going to Extras and back loses nothing.
 - **`COLLECTION_PLAN.txt` is no longer printed after processing**; it is in the download. The
   per-file cut path review stays.
+
+## 081 — collectors: tube holders and strips beside plates
+**Date:** 2026-10-08 · **Status:** active · **refines 076**
+- **What the LMD cuts into is a collector**, Leica's own word: a 96 or 384 well plate, a holder
+  of four Eppendorf tubes, or a holder of one 8-well strip. Jose: one holder plays the part of a
+  plate — one tube is *not* one plate — and an experiment uses one kind of collector, never a mix.
+- **CapIDs on the holders are letters only**, `A`–`D` for tubes and `A`–`H` for the strip, as
+  Jose gave them. py-lmd writes the well string into `<CapID>` verbatim, so nothing changes there.
+- **A registry, `plate.COLLECTORS`**, says per collector how many rows and columns it has,
+  whether a position carries a column number, and the words for it. Every place that split a well
+  as `well[0]` / `well[1:]` reads it through `plate.split_position` instead. Rejected: tubes as a
+  one-column plate with the `1` stripped at export, which gives every position two names, `A1` in
+  the app and `A` in the `.xml` — the quiet kind of mismatch that sends tissue to the wrong cap.
+- **Collectors are named `Plate1`, `TubeHolder1`, `Strip1`**, explicit because most experiments
+  have only a few (Jose). That renames multi-plate downloads from `P1` to `Plate1` — file and
+  folder names and the keys of `samples_and_wells.json`, never the bytes of an `.xml` or a plate
+  map. Files keyed `P1` from earlier downloads still load, as plates.
+- **Margin and spacing are hidden, not disabled, on the holders.** On four tubes they mean
+  nothing, and a disabled control asks "why can't I?".
+- **The code keeps the name `plate`** (`plate.py`, `plate_type`, `n_plates`): a rename across
+  modules and session keys would bury this change. The interface and the docs say collector.
+- No 1536 plate: its rows run to `AF`, nobody has needed one, and Jose dropped it.
+
+## 082 — replicate rings in colours no class has, over a dark edge; a stronger circle fill
+**Date:** 2026-10-08 · **Status:** active · **supersedes the ring colours and fill tint of 070 and 080**
+- **The problem.** Jose: "the replicate outline color matches the classes making a mess out of the
+  colors." The rings were tab10 shaded 0.25 toward black, and tab10 is exactly tab20's strong
+  half, so replicate *n*'s ring was a darker copy of class *n*'s colour.
+- **Measured before choosing.** Keeping the old rule (a ring must contrast with every fill on its
+  own) and asking for rings ΔE ≥ 35 from all 18 class colours at a fill tint of 0.25 leaves only
+  black, blue, indigo, dark violet and dark slate, which look alike on a small circle. Jose saw
+  the three candidates rendered on demo1 and chose the third.
+- **Chosen:** rings white, yellow, magenta, cyan, black, each over a thin black edge
+  (`patheffects.withStroke`), in the picture and in its legend. Every ring is at least ΔE 26 from
+  every class colour and ΔE 51 from every other ring. The edge, not the ring, carries the contrast
+  against the fill: at least 5.9:1 on every class fill.
+- **Circle fill tint 0.6 → 0.25** (Jose: less transparent). A circle on its own region now nearly
+  matches it, so the ring is what marks the circle out. Accepted, because the ring is where the
+  information is.
+- Five ring colours, cycling after that. Most designs collect fewer replicates, and a sixth colour
+  outside tab20's hues and apart from these five could not be found.
+
+## 083 — what hiding the plate controls costs, and the rest of what the rename touches
+**Date:** 2026-10-08 · **Status:** active · **refines 081**
+- **Hidden controls lose their values in Streamlit.** A keyed widget that is not drawn in a run
+  has its state dropped, so with margin and spacing hidden for the holders (081), a look at the
+  tube holder reset a plate's margin 2 to 1 and its spacing to 1 — the layout would then use the
+  edge wells the user chose to avoid, with nothing to say so. While a holder is chosen,
+  `ui_plates.settings_step` writes `plate_margin`, `plate_step_row` and `plate_step_col` back to
+  session state each run (`PLATE_ONLY_KEYS`), which keeps them. Found in the branch review;
+  `tests/test_app.py` switches to tubes and back and checks both values survive.
+- **The cutting-runs warning counts collectors that receive samples**, not the number box:
+  sequential filling or an uploaded file can leave collectors empty, and an empty one gets no
+  `.xml`. With several slides the runs are per slide, so the warning says so.
+- **The rename to `Plate1` reaches more than file names** in a download of several plates: the
+  `plate` column of `samples.csv`, the wording of `COLLECTION_PLAN.txt` ("Load Plate1." instead of
+  "Put plate P1 in the collector."), and `provenance.json` (`plate: Plate1` per cut, plus
+  `experiment.collector`). A script that matched `P1` in `samples.csv` needs updating. The single
+  slide, single plate download is unchanged.

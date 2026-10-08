@@ -64,7 +64,7 @@ def test_plate_dimensions_does_not_borrow_the_word_shape():
 @pytest.mark.parametrize(
     "term",
     ["shape", "object", "polygon", "class", "group", "replicate", "well",
-     "calibration point", "pixel size", "neighbour", "collection"],
+     "calibration point", "pixel size", "neighbour", "collection", "collector", "tube"],
 )
 def test_the_glossary_defines_every_canonical_term(term):
     """A term used in the interface but absent from the glossary is a term nobody can look up."""

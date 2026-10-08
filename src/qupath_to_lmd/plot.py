@@ -10,7 +10,7 @@ import geopandas
 import numpy
 import pandas
 from loguru import logger
-from matplotlib import colormaps
+from matplotlib import colormaps, patheffects
 from matplotlib.collections import PathCollection, PolyCollection
 from matplotlib.colors import to_hex, to_rgb
 from matplotlib.figure import Figure
@@ -39,33 +39,26 @@ MUTED_EDGE = "#b4b4b4"
 SHAPE_LIMIT = 20_000
 
 # Two variables share one picture — which class a shape belongs to and which replicate it goes
-# into — so they are on two channels that cannot be confused. Hue alone is not enough: a full
-# palette for each collides, and at that point an outline can be the same colour as the fill it
-# sits on. Measured across every pair, the tightest contrast with two full palettes is 1.00,
-# meaning literally the same colour (`decisions.md` 070).
+# into — so they are on two channels that cannot be confused (`decisions.md` 070). The replicate
+# rings used to be tab10 darkened, and tab10 *is* tab20's strong half, so every ring was a darker
+# copy of a class colour and read as part of that class (`decisions.md` 082).
 #
-# So the channels differ in lightness as well as hue. Fills are the class, tinted toward white;
-# outlines are the replicate, shaded toward black. Those two factors were chosen by scanning
-# them against the WCAG contrast of every fill-outline pair and the RGB separation of every pair
-# of outlines: they give contrast 1.78 everywhere, with outlines 0.198 apart from each other.
-# 0.6 rather than the 0.55 measured for Okabe-Ito: with tab20 fills 0.55 gives a worst contrast of
-# 1.66, under the floor; 0.6 gives 1.81 with the replicate outlines unchanged (`decisions.md` 080).
-CLASS_FILL_TINT = 0.6
-REPLICATE_SHADE = 0.25
-
-# tab10 rather than tab20: shading compresses a palette, and tab20's twenty entries end up too
-# close together to tell apart once darkened. Ten replicates is already more than a plate makes
-# sense for, and the palette cycles beyond that.
-REPLICATE_COLORMAP = "tab10"
+# The rings are now colours tab20 does not have — white, yellow, magenta, cyan, black — each drawn
+# over a thin black edge. Measured against the 18 class colours: every ring at least ΔE 26 from
+# every class, rings at least ΔE 51 from each other, and the black edge at least 5.9:1 contrast
+# on every class fill, so a white ring still shows on a pale class. The edge is what lets the
+# fill come back towards the full class colour: 0.25 toward white instead of 0.6.
+CLASS_FILL_TINT = 0.25
+REPLICATE_PALETTE = ["#FFFFFF", "#FFFF00", "#FF00FF", "#00FFFF", "#000000"]
+REPLICATE_EDGE = "#000000"
 
 # A circle is a class-coloured disc with a replicate-coloured ring, and on a whole-core view it
 # is only a few pixels across — so the ring has to carry most of the weight.
 CIRCLE_EDGE_WIDTH = 1.5
 # Regions carry the class map, so they have to be readable on their own — the first version at
 # 0.45 was too faint to see the tissue. They are drawn at full strength from the app-wide class
-# palette, while the circles keep the tinted fill so a dark replicate ring still reads on them.
-# That separates the two layers by lightness rather than needing a third set of colours
-# (`decisions.md` 074).
+# palette (`decisions.md` 074). A circle on its own region is then nearly the region's colour, so
+# the ring and its dark edge are what mark it out (`decisions.md` 082).
 REGION_FILL_ALPHA = 0.85
 
 
@@ -90,28 +83,28 @@ def class_fill_colors(classes: list[str]) -> dict[str, tuple]:
 
 
 def replicate_colors(replicates: list[int]) -> dict[int, tuple]:
-    """A dark colour per replicate number, for the outline of a circle.
+    """A ring colour per replicate number, for the outline of a circle.
 
     Keyed by the replicate number rather than by position, so replicate 2 keeps its colour when
     a class with fewer replicates is added or removed — keyed by position, a user comparing two
     screenshots would read a change that never happened. Cycles beyond the palette, which is
-    already more replicates than a plate makes sense for.
+    already more replicates than most designs collect.
     """
-    colormap = colormaps[REPLICATE_COLORMAP]
     return {
-        number: _shade(colormap(int(number - 1) % colormap.N), REPLICATE_SHADE)
+        number: to_rgb(REPLICATE_PALETTE[int(number - 1) % len(REPLICATE_PALETTE)])
         for number in sorted(set(replicates))
     }
+
+
+def _ring_edge() -> list:
+    """The thin dark edge drawn behind every ring, so a light ring shows on a light fill."""
+    return [patheffects.withStroke(linewidth=CIRCLE_EDGE_WIDTH + 1.6, foreground=REPLICATE_EDGE)]
 
 
 def _tint(color, amount: float) -> tuple:
     """A colour moved toward white by `amount`."""
     return tuple(value + (1.0 - value) * amount for value in to_rgb(color))
 
-
-def _shade(color, amount: float) -> tuple:
-    """A colour moved toward black by `amount`."""
-    return tuple(value * (1.0 - amount) for value in to_rgb(color))
 
 
 def plot_shapes(
@@ -269,9 +262,9 @@ def plot_regions_and_circles(
     """The regions as a tissue map, with what will be cut drawn on top of them.
 
     Two variables in one picture, so they are encoded on two channels that cannot be mistaken
-    for one another: **a pale fill is the class** — for the regions and for the circles alike, so
-    a circle is visibly part of the tissue it came from — and **a dark outline is the
-    replicate**. That way a user can see at once whether a class is being sampled evenly and
+    for one another: **the fill is the class** — for the regions and for the circles alike, so
+    a circle is visibly part of the tissue it came from — and **the ring is the replicate**, in a
+    colour no class has, over a thin dark edge. That way a user can see at once whether a class is being sampled evenly and
     whether the replicates are spread across it rather than clustered in one corner.
 
     Args:
@@ -323,6 +316,7 @@ def plot_regions_and_circles(
                         facecolors=[fills[class_name]],
                         edgecolors=[edges[number]],
                         linewidths=CIRCLE_EDGE_WIDTH,
+                        path_effects=_ring_edge(),
                         zorder=3,
                     )
                 )
@@ -380,7 +374,8 @@ def _two_legends(figure, classes, fills, replicates) -> None:
     edges = replicate_colors(replicates)
     replicate_handles = [
         Line2D([], [], marker="o", linestyle="", markersize=10, markerfacecolor="none",
-               markeredgecolor=edges[number], markeredgewidth=2, label=f"replicate {number}")
+               markeredgecolor=edges[number], markeredgewidth=2, label=f"replicate {number}",
+               path_effects=_ring_edge())
         for number in replicates
     ]
     figure.legend(

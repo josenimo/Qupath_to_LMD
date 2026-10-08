@@ -163,22 +163,27 @@ def plate_preview(
     plate_name: str | None = None,
     slot_for_all: bool = False,
 ):
-    """Show the plate with each sample in its well, and offer the scheme as a download.
+    """Show the collector with each sample in its position, and offer the scheme as a download.
 
-    The single plate renderer for every method, so what a user sees does not depend on which
+    The single collector renderer for every method, so what a user sees does not depend on which
     one they picked (`decisions.md` 045). With `slot_for_all`, returns an empty slot beside the
-    download, for the caller to fill with every plate's scheme once all plates are drawn.
+    download, for the caller to fill with every collector's scheme once all are drawn.
     """
+    chosen = plate.collector(plate_type)
     if not samples_and_wells:
-        st.warning("No wells assigned yet.")
+        st.warning(f"No {chosen.position}s assigned yet.")
         return
 
     layout = plate.placement_dataframe(samples_and_wells, plate=plate_type)
     st.dataframe(layout.style.map(plate.highlight(set(samples_and_wells))), width="stretch")
 
     taken = set(samples_and_wells.values())
-    used = sorted(taken, key=lambda well: (well[0], int(well[1:])))
-    caption = f"{len(samples_and_wells)} wells in use on a {plate_type} well plate"
+    used = sorted(taken, key=lambda well: (plate.split_position(well)[0], plate.split_position(well)[1] or 0))
+    where = plate_name or f"a {chosen.label}"
+    if wells and not chosen.spacing:
+        caption = f"{len(samples_and_wells)} of {len(wells)} {chosen.position}s in use on {where}"
+    else:
+        caption = f"{len(samples_and_wells)} {chosen.position}s in use on {where}"
     if used:
         caption += f", {used[0]} to {used[-1]}"
         if wells:
@@ -186,12 +191,12 @@ def plate_preview(
             # nothing ever matched and the "start at" always named the first usable well.
             remaining = [well for well in wells if well not in taken]
             if remaining:
-                caption += f". For another slide into this plate, start at **{remaining[0]}**"
+                caption += f". For another slide into this {chosen.noun}, start at **{remaining[0]}**"
             else:
-                caption += ". This plate is now full"
+                caption += f". This {chosen.noun} is now full"
     st.caption(caption + ".")
 
-    if wells:
+    if wells and chosen.spacing:
         with st.expander(f"Which wells the current margin and spacing leave usable ({len(wells)})"):
             usable = plate.default_layout(plate=plate_type)
             st.dataframe(usable.style.map(plate.highlight(set(wells))), width="stretch")
@@ -199,7 +204,7 @@ def plate_preview(
     this_plate, all_plates = st.columns(2)
     with this_plate:
         st.download_button(
-            label="Download samples and wells setup for current plate",
+            label=f"Download samples and wells setup for current {chosen.noun}",
             data=json.dumps(samples_and_wells, indent=4),
             file_name=f"samples_and_wells_{plate_name}.json" if plate_name else "samples_and_wells.json",
             mime="application/json",
@@ -225,14 +230,15 @@ def editable_plate(
     Returns the assignment to use — the edited one if the user opened the editor, otherwise the
     one passed in.
     """
+    chosen = plate.collector(plate_type)
     if not st.checkbox(
-        "Move samples between wells by hand",
+        f"Move samples between {chosen.position}s by hand",
         value=False,
         key=f"edit_plate_{key_suffix}",
         help=(
-            "Opens the plate as an editable table. Pick a sample from any well's dropdown to "
-            "move it there, or clear a well to leave it empty. The automatic layout is used "
-            "unless you change something."
+            f"Opens the {chosen.noun} as an editable table. Pick a sample from any "
+            f"{chosen.position}'s dropdown to move it there, or clear a {chosen.position} to leave "
+            "it empty. The automatic layout is used unless you change something."
         ),
     ):
         return samples_and_wells
@@ -249,19 +255,21 @@ def editable_plate(
         },
     )
 
-    by_well = plate.layout_to_saw(edited)
+    by_well = plate.layout_to_saw(edited, plate=plate_type)
     duplicated = [name for name in options if list(by_well.values()).count(by_well.get(name, "")) > 1]
     placed = set(by_well)
     missing = [name for name in options if name not in placed]
 
     if missing:
         st.error(
-            f"{len(missing)} sample(s) are no longer on the plate and will not be cut: "
-            f"{', '.join(missing[:8])}. Put them back in a well, or untick the box above to "
-            "return to the automatic layout."
+            f"{len(missing)} sample(s) are no longer on the {chosen.noun} and will not be cut: "
+            f"{', '.join(missing[:8])}. Put them back in a {chosen.position}, or untick the box "
+            "above to return to the automatic layout."
         )
     if duplicated:
-        st.warning(f"More than one sample shares a well: {', '.join(sorted(set(duplicated))[:8])}.")
+        st.warning(
+            f"More than one sample shares a {chosen.position}: {', '.join(sorted(set(duplicated))[:8])}."
+        )
     if not missing and not duplicated:
         st.success(f"Using your layout: {len(by_well)} samples placed by hand.")
 

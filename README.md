@@ -34,7 +34,9 @@ experiment in view (e.g. *2 slides → 27 samples → 1 plate*):
    each slide's calibration points
 2. **Samples** — choose how to collect (whole shapes, selected shapes, or regions and circles) and
    how much
-3. **Plates** — set up the plate; more plates appear when the samples need them
+3. **Collector** — choose what to collect into: a 384 or 96 well plate, an Eppendorf tube holder
+   (4 tubes, `A`–`D`) or an 8-well strip holder (one strip, `A`–`H`); more collectors appear when
+   the samples need them, each one its own cutting run. One kind of collector per experiment.
 4. **Cut** — process the files and download them
 
 ### How to collect
@@ -152,7 +154,7 @@ This is an example:
 
 Each "Class_name_" is the exact name of the class of annotation found in Qupath.
 The "C3", "C5", "C7" strings determine which well each class of shapes is collected into.
-Works for both 384-well plates and 96-well plates
+Works for 384-well and 96-well plates. For the tube holder and the strip holder the positions are letters only, e.g. `{'Tumor': 'A', 'Stroma': 'B'}`
 
 (1) I have a KeyError type of error, what do I do?
 
@@ -190,12 +192,12 @@ them. Each slide keeps its own calibration points and gets its own `.xml`.
 - **Into different wells:** give each slide's classes different names in QuPath (e.g.
   `P1_Tumor`, `P2_Tumor`), and they become separate samples.
 
-The download holds one `.xml` per slide (and per plate), a `samples.csv` saying what each well
+The download holds one `.xml` per slide (and per collector, in folders such as `Plate1/` or `TubeHolder2/`), a `samples.csv` saying what each well
 gets from each slide, and `COLLECTION_PLAN.txt` with numbered steps for the LMD. To export every image
 of a QuPath project at once, run `demo_Qupath_project/QuPath_scripts/export_for_lmd.groovy` with
 *Run for project*, then zip the folder it writes.
 
-You can still fill one plate over several sessions with **Start at well** in the plate settings.
+You can still fill one plate over several sessions with **Start at well** in the collector settings.
 
 To try it, `demo_Qupath_project/demo1/` holds six slides: two patients, three serial sections
 each, with classes named per patient (`P1_Cancer`, `P2_Cancer`, …). Upload all six: each patient's

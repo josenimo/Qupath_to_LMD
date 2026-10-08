@@ -44,7 +44,8 @@ src/qupath_to_lmd/
                                   rewrite_classification, sanitize_for_qupath,
                                   synthesize_qupath_columns, classification_values,
                                   implied_pixel_size, drop_unused_columns
-  plate.py                        plate shapes, acceptable_wells, layouts, saw parse/convert,
+  plate.py                        COLLECTORS registry (plates, tube holder, strip holder),
+                                  split_position, acceptable_wells, layouts, saw parse/convert,
                                   PlateDistribution, plates_needed, assign_to_plates, per_plate
   qc.py                           triangle_qc, validate_saw, compare_pixel_size (reports)
   stats.py                        class_statistics, for_display, reference_pixel_sizes
@@ -72,7 +73,7 @@ src/qupath_to_lmd/
   ui_collect_whole.py             method: whole shapes (was the annotations workflow)
   ui_collect_select.py            method: selected shapes (was the cell workflow)
   ui_collect_regions.py           method: regions and circles (was ui_packing)
-  ui_plates.py                    Stage 3: plate settings, number of plates, PlateLayout
+  ui_plates.py                    Stage 3, Collector: collector settings, how many, PlateLayout
   ui_cut.py                       Stage 4: overview, exclusions, process, download
   ui_summary.py                   sidebar: experiment at a glance, stage checklist
   ui_shared.py                    helpers several stages use: amounts, scale reporting,
@@ -82,7 +83,7 @@ src/qupath_to_lmd/
   __init__.py                     empty
 tools/
   golden_harness.py               byte-equality regression gate
-  golden/                         21 reference artefacts, 9 cases
+  golden/                         27 reference artefacts, 11 cases
 demo_Qupath_project/              real QuPath project used as test fixture
   TD_01_verysmall_mIF.geojson     9 features: 6 annotation Polygons + 3 calibration Points
   Single_cells.geojson            131 features: 121 cells + 7 annotations + 3 Points
@@ -150,7 +151,7 @@ Verified against both demo files.
 ## The pipeline, step by step
 
 One page of **four stages, always in this order** (`decisions.md` 078): **1 · Slides** →
-**2 · Samples** → **3 · Plates** → **4 · Cut**. Each stage hands the next a plain object —
+**2 · Samples** → **3 · Collector** → **4 · Cut**. Each stage hands the next a plain object —
 `ui_slides.SlidesContext`, then `model.SampleSet`, then `ui_plates.PlateLayout` — and no stage
 imports another. The router in `streamlit_app.py` only calls the four in turn and feeds the
 sidebar summary.
@@ -228,16 +229,21 @@ The reading and QC below is unchanged; it now runs once per uploaded file.
    `T-Cell_001…`, one name per shape, for single-cell collection. Stores
    `original_classification_name` so repeated runs stay idempotent, and rewrites the
    nested `classification` dict via `geojson.rewrite_classification`.
-2. **Plate layout** — `ui_plates.settings_step` is the only place plate options live (type,
-   margin, row/column spacing, start well, randomize), feeding `plate.acceptable_wells`, and
+2. **Collector layout** — `ui_plates.settings_step` is the only place collector options live
+   (collector, margin, row/column spacing, start well, randomize), feeding `plate.acceptable_wells`, and
    `plate.assign_to_plates` places the samples — sorted, so one plate is exactly the old
    `sample_layout`/`assign_wells` layout. No *Confirm* button any more, for any method: the plate
-   updates live (078). `ui_shared.plate_preview` is the only plate renderer (045).
-2.3 **Custom samples-and-wells upload** — an expander in the Plates stage, for every method;
+   updates live (078). `ui_shared.plate_preview` is the only collector renderer (045). The widget
+   `plate_type` holds a key of `plate.COLLECTORS` — `384`, `96`, `tubes`, `strip` — shown by its
+   label. Margin and spacing are hidden for the tube and strip holders (081), and their widget
+   values are written back while hidden so a plate gets them again (083); with more than one
+   collector receiving samples a warning says how many separate cutting runs that is, and the number of collectors
+   can go past 50 when the samples need it (four tubes a holder reaches 50 at 200 samples).
+2.3 **Custom samples-and-wells upload** — an expander in the Collector stage, for every method;
    overrides the generated layout. `plate.assignment_from_scheme` reads both shapes the app
-   writes: `{sample: well}` (plate P1) and `{"P1": {sample: well}, "P2": …}` — so the
+   writes: `{sample: well}` (the first collector) and `{"Plate1": {sample: well}, "Plate2": …}` (or `TubeHolder1`, `Strip1`; files keyed `P1` from before 081 load as plates) — so the
    `samples_and_wells.json` of any download, one plate or several, loads back in for changes.
-   Each plate's scheme downloads as `samples_and_wells_P<n>.json`; with several plates a second
+   Each plate's scheme downloads as `samples_and_wells_Plate<n>.json`; with several plates a second
    button beside it downloads all of them (`samples_and_wells_all_plates.json`), filled after every
    tab so hand edits on any plate are in it.
    `plate.parse_saw_file` reads a `.txt`/`.json` containing a **Python dict literal** and
@@ -253,7 +259,7 @@ The reading and QC below is unchanged; it now runs once per uploaded file.
      coordinates grow downward and the LMD stage does not.
    - One `new_shape` per selected row, in load order, into `plan.shapes["well"]`.
    - QC image is written to a fresh temp directory, not the working directory.
-   Then `export.build_bundle` zips: `<stem>.xml`, `<stem>_<plate>_wellplate.csv`,
+   Then `export.build_bundle` zips: `<stem>.xml`, `<stem>_<plate>_wellplate.csv` (`<stem>_tubes.csv` / `<stem>_strip.csv` for the holders),
    `samples_and_wells.json`, `provenance.json`, `<stem>_processed.geojson` (sanitised for
    QuPath re-import), `collection.png`, and the session log.
 
@@ -561,33 +567,35 @@ MultiPolygons appear only at the merge, and the explode turns those into separat
 ### The feedback picture
 
 `plot.plot_regions_and_circles`. Two variables, so two channels that cannot be confused:
-**a pale fill is the class**, for regions and circles alike, so a circle is visibly part of the
-tissue it came from; **a dark outline is the replicate**.
+**the fill is the class**, for regions and circles alike, so a circle is visibly part of the
+tissue it came from; **the ring is the replicate** (`decisions.md` 082, superseding the ring
+colours and fill tint of 070 and 080).
 
 Hue alone is not enough, and this was measured rather than guessed. With a full palette for each
-channel, the tightest fill-outline pair across every combination has a WCAG contrast of **1.00** —
-literally the same colour, which is why an orange circle of an orange class hid its own ring in
-the first version. Scanning tint and shade factors against the contrast of every pair *and* the
-RGB separation of every pair of outlines:
+channel the tightest fill-outline pair has a WCAG contrast of **1.00**, which is why an orange
+circle of an orange class hid its own ring in the first version. Until 082 the fix was lightness:
+fills tinted 0.6 toward white, rings tab10 shaded 0.25 toward black. But tab10 *is* tab20's
+strong half, so each ring was a darker copy of a class colour, and Jose found the picture a mess.
 
-| fills | outlines | min contrast | min outline separation |
-| --- | --- | --- | --- |
-| Okabe-Ito as-is | tab20 | 1.00 | 0.098 |
-| Okabe-Ito as-is | tab10 | 1.00 | 0.265 |
-| tinted 0.55 | tab20 | 1.00 | 0.098 |
-| **tinted 0.55** | **tab10 shaded 0.25** | **1.78** | **0.198** |
-| tinted 0.6 | tab10 shaded 0.4 | 2.83 | 0.159 |
+Since 082 the rings use colours tab20 does not have, `REPLICATE_PALETTE = white, yellow, magenta,
+cyan, black`, each drawn over a thin black edge (`REPLICATE_EDGE`, a matplotlib path effect, in
+the legend too), and `CLASS_FILL_TINT = 0.25`. Measured against the 18 class colours:
 
-So `CLASS_FILL_TINT = 0.55`, `REPLICATE_SHADE = 0.25` — **since 080 the class palette is tab20
-(greys left out, strong shades first) and the tint 0.6**: with tab20 fills 0.55 gave a worst
-contrast of 1.66, under the floor, and 0.6 gives 1.81 with the outlines unchanged. Then: `REPLICATE_COLORMAP = "tab10"`. tab10
-rather than tab20 because shading compresses a palette and tab20's twenty entries end up too
-close to tell apart once darkened; ten replicates is already more than a plate makes sense for,
-and it cycles beyond that. `class_colors` (the app-wide class palette) stays the single source of
-truth for a class's hue and `class_fill_colors` tints it, so a class looks like itself in every
-picture. `replicate_colors` keys the palette by replicate *number*, not position, so replicate 2
-keeps its colour when a class with fewer replicates appears.
-`tests/test_plot.py` asserts both the contrast floor and the separation floor.
+| | value |
+| --- | --- |
+| smallest ΔE (CIE76) between a ring and any class colour | 26.0 (white) |
+| smallest ΔE between two rings | 50.9 |
+| black edge on the least favourable class fill (WCAG) | 5.9 |
+| a ring on its black edge (WCAG) | 6.7 |
+
+A scan for rings that are visible on the fill *without* an edge, and still ΔE ≥ 35 from every
+class, finds only dark blues, purples and black, which look alike at circle size; that is why
+the edge carries the contrast instead. A circle on its own region is now close to the region's
+colour, so the ring is what marks it out. `class_colors` stays the single source of truth for a
+class's hue and `class_fill_colors` tints it. `replicate_colors` keys the palette by replicate
+*number*, not position, so replicate 2 keeps its colour when a class with fewer replicates
+appears, and cycles after five. `tests/test_plot.py` asserts the ΔE floors, the edge contrast and
+that every ring and legend entry has its edge.
 
 **Holes are drawn as holes**, via `polygon_paths`: `Path.make_compound_path` over the exterior
 and every interior ring. Two things had to be right. Exterior-only drawing painted one region
@@ -851,12 +859,12 @@ offered are the real ones — a larger smallest circle, or a lower smoothing tol
 ## Several plates (round five)
 
 - `plate.assign_to_plates(groups, wells, n_plates, distribution, randomize, seed, start_well)`
-  returns `{group: (plate, well)}`, plates named `P1`, `P2`, …. **One plate returns exactly
+  returns `{group: (plate, well)}`, collectors named `Plate1`, `Plate2`, … (`TubeHolder1`, `Strip1` for the holders, `decisions.md` 081). **One plate returns exactly
   `assign_wells`**, tested with and without randomizing and with a start well, so single-plate
-  collections land where they always have. `start_well` applies to P1 only.
+  collections land where they always have. `start_well` applies to the first collector only.
 - **BALANCED** (default, `decisions.md` 076) deals each class's replicates round-robin over the
   plates, each class starting on the plate with the most room. Every plate holds every class when
-  replicates ≥ plates. **SEQUENTIAL** fills P1 with the first sorted groups, then P2. Within a plate
+  replicates ≥ plates. **SEQUENTIAL** fills the first collector with the first sorted groups, then the second. Within a plate
   wells come from `assign_wells`. Groups that fit nowhere are absent from the result for the caller
   to name.
 - `plates_needed(n_samples, usable_wells, first_plate_wells)` — the first plate may be short when
@@ -865,11 +873,11 @@ offered are the real ones — a larger smallest circle, or a lower smoothing tol
   a slide that sends nothing to a plate gets no file, so the instructions never send the user to
   mount a slide and cut nothing.
 - `export.build_experiment_bundle` zips `samples.csv` (from `PooledSelection.by_sample()`), one
-  `plate_Pn.csv` each, `samples_and_wells.json` keyed by plate, `provenance.json` (experiment plus
+  `Plate<n>.csv` (`TubeHolder<n>.csv`, `Strip<n>.csv`) each, `samples_and_wells.json` keyed by collector, `provenance.json` (experiment plus
   one entry per cut), `COLLECTION_PLAN.txt`, the XMLs and their PNGs, and one
   `qupath/<slide>_processed.geojson` per slide. `CutOrder.BY_SLIDE` files XMLs as
-  `slide_<S>/<S>__<P>.xml`, `BY_PLATE` as `plate_<P>/<P>__<S>.xml` — both names carry slide and
-  plate. `COLLECTION_PLAN.txt` is numbered steps in that order, naming the calibration points per slide.
+  `slide_<S>/<S>__<P>.xml`, `BY_PLATE` as `<P>/<P>__<S>.xml`, `<P>` being `Plate1`, `TubeHolder1`, … (`decisions.md` 081) — both names carry slide and
+  plate. `COLLECTION_PLAN.txt` is numbered steps in that order, naming the calibration points per slide and saying "Load TubeHolder2 (tubes A–D)."; provenance records the collector.
   **`CutOrder` changes only the download's organisation** — folders, file names, the order of
   `COLLECTION_PLAN.txt`; every `.xml` is identical either way and can be loaded in any order. The
   UI calls it *Organise the download* and says so (079). Was `HOW_TO_CUT.txt` until 079.
@@ -899,7 +907,7 @@ Initialised in the block at the top of `streamlit_app.py`. Any new key belongs h
 | `packing_params` | `PackingParams` as a dict: sizes, gap, effort and seed of the last packing |
 | `region_budgets` | list of `ClassPacking` as dicts: per class, replicates, µm² per replicate, circle size range, gap |
 | `slide_strategy`, `slide_order` | how amounts are split between slides, and the order for priority |
-| `n_plates`, `plate_distribution` | plates in use and `'balanced'` \| `'sequential'` |
+| `n_plates`, `plate_distribution` | collectors in use and `'balanced'` \| `'sequential'` (the widget `plate_type` holds `'384'` \| `'96'` \| `'tubes'` \| `'strip'`) |
 | `cut_order` | `'slide'` \| `'plate'` — order of the cutting instructions and download folders |
 | `zip_buffer`, `bundle_name` | the download bundle and its filename |
 | `bundle_signature` | hash of what built the bundle; a mismatch withdraws the download |
@@ -909,6 +917,9 @@ Initialised in the block at the top of `streamlit_app.py`. Any new key belongs h
 
 - 384-well plate = rows A–P (16) × columns 1–24. 96-well = rows A–H (8) × columns 1–12.
 - Wells are strings like `"C3"`: row letter + column number, no zero padding.
+- **Tube holder** = 4 Eppendorf tubes, CapIDs `A`–`D`. **Strip holder** = one 8-well strip, CapIDs
+  `A`–`H`. Letters only, no column (`decisions.md` 081). Each holder is one collector, the way a
+  plate is; margin and spacing do not apply to them. All of it lives in `plate.COLLECTORS`.
 - On the LMD7 with a 384-well plate, **rows A/B and columns 1/2 collect unreliably** —
   hence the margin control; margin 2 is the documented suggestion for 384.
 - Row/column *step* leaves blank wells between samples for easier pipetting.
@@ -1134,14 +1145,17 @@ uv run python tools/golden_harness.py check      # compare against the golden fi
 uv run python tools/golden_harness.py capture    # re-bless, only when output should change
 ```
 
-Nine cases, each covering a path where a change could silently move coordinates:
+Eleven cases, each covering a path where a change could silently move coordinates:
 `annotations` (ordinary mini-bulk), `cells` (128 shapes with measurements),
 `cells_exploded` (one well per shape), `annotations_96` (different plate geometry),
 `multiclass_cells` (real QuPath 0.7.0 export shape), `regions` (Voronoi projection and merge,
 where every coordinate is computed rather than read from the file), `packing` (circles placed by
 a seeded random walk), `two_slides` (one `.xml` per slide into shared wells), `two_plates` (nine samples balanced over two
-six-well plates). Each produces an XML and a CSV, except `two_slides`, which produces one XML per
-slide, and `two_plates`, one XML and one plate map per plate — 21 artefacts.
+six-well plates), `tubes` (letter CapIDs and the one-column map of a tube holder), `strips` (nine
+samples over two 8-well strips, so collector names reach the files). Each produces an XML and a
+CSV, except `two_slides`, which produces one XML per slide, and `two_plates` and `strips`, one XML
+and one map per collector — 27 artefacts. `two_plates` files keep their `P1` labels through
+`_golden_label`, because they predate collector names (`decisions.md` 081).
 
 - `capture` rewrites **every** case, not only a new one, so after adding a case check
   `git diff tools/golden/` shows nothing but the new files before committing.
