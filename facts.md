@@ -566,33 +566,35 @@ MultiPolygons appear only at the merge, and the explode turns those into separat
 ### The feedback picture
 
 `plot.plot_regions_and_circles`. Two variables, so two channels that cannot be confused:
-**a pale fill is the class**, for regions and circles alike, so a circle is visibly part of the
-tissue it came from; **a dark outline is the replicate**.
+**the fill is the class**, for regions and circles alike, so a circle is visibly part of the
+tissue it came from; **the ring is the replicate** (`decisions.md` 082, superseding the ring
+colours and fill tint of 070 and 080).
 
 Hue alone is not enough, and this was measured rather than guessed. With a full palette for each
-channel, the tightest fill-outline pair across every combination has a WCAG contrast of **1.00** —
-literally the same colour, which is why an orange circle of an orange class hid its own ring in
-the first version. Scanning tint and shade factors against the contrast of every pair *and* the
-RGB separation of every pair of outlines:
+channel the tightest fill-outline pair has a WCAG contrast of **1.00**, which is why an orange
+circle of an orange class hid its own ring in the first version. Until 082 the fix was lightness:
+fills tinted 0.6 toward white, rings tab10 shaded 0.25 toward black. But tab10 *is* tab20's
+strong half, so each ring was a darker copy of a class colour, and Jose found the picture a mess.
 
-| fills | outlines | min contrast | min outline separation |
-| --- | --- | --- | --- |
-| Okabe-Ito as-is | tab20 | 1.00 | 0.098 |
-| Okabe-Ito as-is | tab10 | 1.00 | 0.265 |
-| tinted 0.55 | tab20 | 1.00 | 0.098 |
-| **tinted 0.55** | **tab10 shaded 0.25** | **1.78** | **0.198** |
-| tinted 0.6 | tab10 shaded 0.4 | 2.83 | 0.159 |
+Since 082 the rings use colours tab20 does not have, `REPLICATE_PALETTE = white, yellow, magenta,
+cyan, black`, each drawn over a thin black edge (`REPLICATE_EDGE`, a matplotlib path effect, in
+the legend too), and `CLASS_FILL_TINT = 0.25`. Measured against the 18 class colours:
 
-So `CLASS_FILL_TINT = 0.55`, `REPLICATE_SHADE = 0.25` — **since 080 the class palette is tab20
-(greys left out, strong shades first) and the tint 0.6**: with tab20 fills 0.55 gave a worst
-contrast of 1.66, under the floor, and 0.6 gives 1.81 with the outlines unchanged. Then: `REPLICATE_COLORMAP = "tab10"`. tab10
-rather than tab20 because shading compresses a palette and tab20's twenty entries end up too
-close to tell apart once darkened; ten replicates is already more than a plate makes sense for,
-and it cycles beyond that. `class_colors` (the app-wide class palette) stays the single source of
-truth for a class's hue and `class_fill_colors` tints it, so a class looks like itself in every
-picture. `replicate_colors` keys the palette by replicate *number*, not position, so replicate 2
-keeps its colour when a class with fewer replicates appears.
-`tests/test_plot.py` asserts both the contrast floor and the separation floor.
+| | value |
+| --- | --- |
+| smallest ΔE (CIE76) between a ring and any class colour | 26.0 (white) |
+| smallest ΔE between two rings | 50.9 |
+| black edge on the least favourable class fill (WCAG) | 5.9 |
+| a ring on its black edge (WCAG) | 6.7 |
+
+A scan for rings that are visible on the fill *without* an edge, and still ΔE ≥ 35 from every
+class, finds only dark blues, purples and black, which look alike at circle size; that is why
+the edge carries the contrast instead. A circle on its own region is now close to the region's
+colour, so the ring is what marks it out. `class_colors` stays the single source of truth for a
+class's hue and `class_fill_colors` tints it. `replicate_colors` keys the palette by replicate
+*number*, not position, so replicate 2 keeps its colour when a class with fewer replicates
+appears, and cycles after five. `tests/test_plot.py` asserts the ΔE floors, the edge contrast and
+that every ring and legend entry has its edge.
 
 **Holes are drawn as holes**, via `polygon_paths`: `Path.make_compound_path` over the exterior
 and every interior ring. Two things had to be right. Exterior-only drawing painted one region

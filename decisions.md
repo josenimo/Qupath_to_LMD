@@ -1922,3 +1922,22 @@ Jose's notes after clicking through 078.
 - **The code keeps the name `plate`** (`plate.py`, `plate_type`, `n_plates`): a rename across
   modules and session keys would bury this change. The interface and the docs say collector.
 - No 1536 plate: its rows run to `AF`, nobody has needed one, and Jose dropped it.
+
+## 082 — replicate rings in colours no class has, over a dark edge; a stronger circle fill
+**Date:** 2026-10-08 · **Status:** active · **supersedes the ring colours and fill tint of 070 and 080**
+- **The problem.** Jose: "the replicate outline color matches the classes making a mess out of the
+  colors." The rings were tab10 shaded 0.25 toward black, and tab10 is exactly tab20's strong
+  half, so replicate *n*'s ring was a darker copy of class *n*'s colour.
+- **Measured before choosing.** Keeping the old rule (a ring must contrast with every fill on its
+  own) and asking for rings ΔE ≥ 35 from all 18 class colours at a fill tint of 0.25 leaves only
+  black, blue, indigo, dark violet and dark slate, which look alike on a small circle. Jose saw
+  the three candidates rendered on demo1 and chose the third.
+- **Chosen:** rings white, yellow, magenta, cyan, black, each over a thin black edge
+  (`patheffects.withStroke`), in the picture and in its legend. Every ring is at least ΔE 26 from
+  every class colour and ΔE 51 from every other ring. The edge, not the ring, carries the contrast
+  against the fill: at least 5.9:1 on every class fill.
+- **Circle fill tint 0.6 → 0.25** (Jose: less transparent). A circle on its own region now nearly
+  matches it, so the ring is what marks the circle out. Accepted, because the ring is where the
+  information is.
+- Five ring colours, cycling after that. Most designs collect fewer replicates, and a sixth colour
+  outside tab20's hues and apart from these five could not be found.
