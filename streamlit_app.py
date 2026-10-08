@@ -78,6 +78,9 @@ st.divider()
 # can change without the others knowing (`decisions.md` 078).
 
 summary = ui_summary.Summary.start()
+# Filled before the stages, so a hard stop in a stage never takes the extras away with it.
+with summary.extras:
+    ui_shared.extras_step()
 
 context = ui_slides.render()
 st.divider()
@@ -93,10 +96,3 @@ if context is not None:
             summary.plates(layout, len(sample_set.samples))
             summary.cut(ui_cut.render(context, sample_set, layout))
             st.divider()
-
-#######################
-####### EXTRAS ########
-#######################
-
-ui_shared.extras_step()
-st.divider()

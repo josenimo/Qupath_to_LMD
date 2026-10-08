@@ -291,3 +291,17 @@ def test_the_sample_set_route_cuts_exactly_what_the_old_route_cut(cells, calibra
     assert export.build_collection(new, saw).xml == export.build_collection(old, saw).xml, (
         "The sample-set route wrote a different .xml from the plan builder the golden harness guards."
     )
+
+
+def test_whole_shapes_do_not_repeat_the_sample_as_a_class(two_copies):
+    """For whole shapes a sample is its class; a second identical column only adds width."""
+    sheet = slides.whole_shape_samples(_pools(two_copies), ["single_cells_demo"], _scales(two_copies)).sheet()
+    assert "class" not in sheet.columns, f"Whole-shape sheet still has a class column: {list(sheet.columns)}"
+
+
+def test_replicates_keep_their_class_column(two_copies):
+    pools = _pools(two_copies)
+    budgets = [ClassBudget("single_cells_demo", 2, 5)]
+    pooled = slides.select_across_slides(pools, budgets, BudgetMode.CELLS, selection.SelectionParams(), _scales(two_copies))
+    sheet = slides.selected_samples(pools, pooled, budgets, BudgetMode.CELLS, _scales(two_copies)).sheet()
+    assert list(sheet["class"].unique()) == ["single_cells_demo"] and "replicate" in sheet.columns

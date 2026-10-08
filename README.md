@@ -191,11 +191,15 @@ them. Each slide keeps its own calibration points and gets its own `.xml`.
   `P1_Tumor`, `P2_Tumor`), and they become separate samples.
 
 The download holds one `.xml` per slide (and per plate), a `samples.csv` saying what each well
-gets from each slide, and `HOW_TO_CUT.txt` with numbered steps for the LMD. To export every image
+gets from each slide, and `COLLECTION_PLAN.txt` with numbered steps for the LMD. To export every image
 of a QuPath project at once, run `demo_Qupath_project/QuPath_scripts/export_for_lmd.groovy` with
 *Run for project*, then zip the folder it writes.
 
 You can still fill one plate over several sessions with **Start at well** in the plate settings.
+
+To try it, `demo_Qupath_project/demo1/` holds six slides: two patients, three serial sections
+each, with classes named per patient (`P1_Cancer`, `P2_Cancer`, …). Upload all six: each patient's
+sections pool into the same wells, and the two patients stay apart.
 
 (7) How should I position my calibration points?
 

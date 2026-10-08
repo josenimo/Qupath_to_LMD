@@ -30,7 +30,7 @@ class _Upload:
         return self._data
 
 
-def _run(monkeypatch, files: list[str], method: str | None = None, actions=()) -> AppTest:
+def _start(monkeypatch, files: list[str]) -> AppTest:
     uploads = [_Upload(DEMO / name) for name in files]
     real = streamlit.file_uploader
 
@@ -40,6 +40,19 @@ def _run(monkeypatch, files: list[str], method: str | None = None, actions=()) -
     monkeypatch.setattr(streamlit, "file_uploader", uploader)
     app = AppTest.from_file(str(REPO / "streamlit_app.py"), default_timeout=180)
     app.run()
+    return app
+
+
+def _confirm_calibration(app: AppTest) -> None:
+    for box in app.checkbox:
+        if box.key and box.key.startswith("calib_confirmed_"):
+            box.check()
+    app.run()
+
+
+def _run(monkeypatch, files: list[str], method: str | None = None, actions=()) -> AppTest:
+    app = _start(monkeypatch, files)
+    _confirm_calibration(app)
     if method:
         app.radio(key="workflow_choice").set_value(method).run()
     for action in actions:
@@ -80,7 +93,7 @@ def test_two_slides_on_two_plates_give_four_cutting_files(monkeypatch):
     files = _contents(app)
     xmls = sorted(name for name in files if name.endswith(".xml"))
     assert len(xmls) == 4, f"Two slides on two plates should give four .xml files, got {xmls}."
-    for expected in ("samples.csv", "plate_P1.csv", "plate_P2.csv", "HOW_TO_CUT.txt"):
+    for expected in ("samples.csv", "plate_P1.csv", "plate_P2.csv", "COLLECTION_PLAN.txt"):
         assert expected in files, f"{expected} is missing from the experiment download."
 
 
@@ -89,3 +102,21 @@ def test_regions_across_two_slides_run_to_a_download(monkeypatch):
     assert {"slide_Single_cells/Single_cells__P1.xml", "slide_Single_cells_2/Single_cells_2__P1.xml"} <= set(files), (
         f"Each copy of the slide should get its own .xml: {sorted(files)}"
     )
+
+
+def test_nothing_goes_further_until_every_slide_is_confirmed(monkeypatch):
+    """The suggested points are only a suggestion; a swapped point mis-cuts every shape."""
+    app = _start(monkeypatch, ["Single_cells.geojson", "multiclass_cells.geojson"])
+    headers = [block.value for block in app.markdown if block.value.startswith("## ")]
+    assert "## 2 · Samples" not in headers, "The Samples stage appeared before any calibration was confirmed."
+
+    first = next(box for box in app.checkbox if box.key and box.key.startswith("calib_confirmed_"))
+    first.check()
+    app.run()
+    assert "## 2 · Samples" not in [b.value for b in app.markdown], (
+        "The Samples stage appeared with one of two slides still unconfirmed."
+    )
+    assert any("still to confirm" in info.value for info in app.info), "The app did not say which slide is waiting."
+
+    _confirm_calibration(app)
+    assert "## 2 · Samples" in [b.value for b in app.markdown], "Confirming every slide did not open the Samples stage."

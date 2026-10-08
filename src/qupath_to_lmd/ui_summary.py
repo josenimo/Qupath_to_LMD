@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 import streamlit as st
 
 STAGES = ("Slides", "Samples", "Plates", "Cut")
+EMOJI = {"Slides": "🔬", "Samples": "🧬", "Plates": "🧫", "Cut": "✂️"}
 
 
 @dataclass
@@ -17,14 +18,18 @@ class Summary:
     """Fills a sidebar placeholder; each stage reports in as it finishes."""
 
     placeholder: object = None
+    extras: object = None
     lines: dict[str, str] = field(default_factory=dict)
     figures: dict[str, str] = field(default_factory=dict)
 
     @classmethod
     def start(cls) -> "Summary":
-        """An empty summary bound to the sidebar."""
-        st.sidebar.markdown("### Your experiment")
-        summary = cls(placeholder=st.sidebar.empty())
+        """An empty summary in the sidebar's Experiment tab; the Extras tab is returned for filling."""
+        experiment, extras = st.sidebar.tabs(["📋 Experiment", "🧰 Extras"])
+        with experiment:
+            st.markdown("### Your experiment")
+            placeholder = st.empty()
+        summary = cls(placeholder=placeholder, extras=extras)
         summary._render()
         return summary
 
@@ -70,6 +75,6 @@ class Summary:
             st.markdown(" → ".join(figures) if figures else "Upload a QuPath export to begin.")
             for stage in STAGES:
                 if stage in self.lines:
-                    st.markdown(f"✅ **{stage}** — {self.lines[stage]}")
+                    st.markdown(f"{EMOJI[stage]} **{stage}** ✅ — {self.lines[stage]}")
                 else:
-                    st.markdown(f"⬜ {stage}")
+                    st.markdown(f":gray[{EMOJI[stage]} {stage}]")

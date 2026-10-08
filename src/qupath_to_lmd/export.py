@@ -237,11 +237,12 @@ def build_bundle(
 
 
 class CutOrder(str, Enum):
-    """The order an experiment with several slides and plates is cut in on the LMD."""
+    """How an experiment's download is organised: by slide or by plate.
 
-    # Calibrate a slide once and swap plates under it.
+    Changes only folders, file names and the order of COLLECTION_PLAN.txt — never an `.xml`.
+    """
+
     BY_SLIDE = "slide"
-    # Mount a plate once and calibrate each slide in turn over it.
     BY_PLATE = "plate"
 
 
@@ -269,7 +270,10 @@ def cutting_instructions(cuts: list[Cut], order: CutOrder) -> str:
     """Numbered steps for the LMD, in the order the user chose."""
     slides = list(dict.fromkeys(cut.slide for cut in cuts))
     plates = list(dict.fromkeys(cut.plate for cut in cuts))
-    lines = [f"{len(slides)} slides, {len(plates)} plates, {len(cuts)} .xml files.", ""]
+    def count(n: int, noun: str) -> str:
+        return f"{n} {noun}{'s' if n != 1 else ''}"
+
+    lines = [f"{count(len(slides), 'slide')}, {count(len(plates), 'plate')}, {count(len(cuts), '.xml file')}.", ""]
 
     def calibrate(cut: Cut) -> str:
         return ", ".join(cut.plan.calibration_names)
@@ -339,7 +343,7 @@ def build_experiment_bundle(
                 indent=4,
             ),
         )
-        archive.writestr("HOW_TO_CUT.txt", cutting_instructions(cuts, order))
+        archive.writestr("COLLECTION_PLAN.txt", cutting_instructions(cuts, order))
 
         written: set[str] = set()
         for cut in cuts:

@@ -347,6 +347,9 @@ class SampleSet:
         sheet.insert(2, "replicate", pandas.array(replicates, dtype="Int64"))
         if sheet["replicate"].isna().all():
             sheet = sheet.drop(columns=["replicate"])
+        # Whole shapes: a sample *is* its class, so the column would only repeat the first one.
+        if (sheet["class"] == sheet["sample"]).all():
+            sheet = sheet.drop(columns=["class"])
         return sheet
 
     def plan(

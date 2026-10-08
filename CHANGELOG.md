@@ -9,6 +9,19 @@ Terms are defined in [GLOSSARY.md](GLOSSARY.md); the reasoning behind each choic
 
 ## Unreleased
 
+### Polish after the first click-through
+
+- **Confirm each slide's calibration points.** The suggested points are only a suggestion; tick
+  *These are the right calibration points* on every slide to continue. Confirmed slides get a ✅.
+- The **classes table** is full width, with the picture below it — no more sideways scrolling.
+- **Plate files carry the plate's name** (`samples_and_wells_P1.json`), there is a button for all
+  plates at once, and any of them — or the `samples_and_wells.json` from a download — loads back
+  into the Plates stage to change an experiment later.
+- *Order to cut in* is now **Organise the download**: it only arranges folders and names; the
+  `.xml` files are the same either way. `HOW_TO_CUT.txt` is now `COLLECTION_PLAN.txt`.
+- **Extras** live in the sidebar, in their own tab.
+- New demo data, `demo_Qupath_project/demo1/`: two patients, three serial sections each.
+
 ### Several slides, several plates, one page
 
 - **Upload several slides at once** — several `.geojson` files, or a `.zip` of them. Each slide
@@ -24,7 +37,7 @@ Terms are defined in [GLOSSARY.md](GLOSSARY.md); the reasoning behind each choic
 - **One page, four stages**: Slides → Samples → Plates → Cut. All three ways to collect use the same
   stages, and the sidebar shows your experiment at a glance.
 - **The download explains itself**: `samples.csv` (what each well gets from each slide),
-  `HOW_TO_CUT.txt` (numbered steps in the order you chose — slide by slide or plate by plate), and
+  `COLLECTION_PLAN.txt` (numbered steps in the order you chose — slide by slide or plate by plate), and
   every `.xml` named for its slide and plate.
 - The annotations workflow is now **Whole shapes**, and no longer needs a *Confirm* click — the
   plate updates as you change it. What it cuts is unchanged, byte for byte. Your own

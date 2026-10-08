@@ -160,11 +160,14 @@ def plate_preview(
     plate_type: str,
     wells: list[str] | None = None,
     key_suffix: str = "",
-) -> None:
+    plate_name: str | None = None,
+    slot_for_all: bool = False,
+):
     """Show the plate with each sample in its well, and offer the scheme as a download.
 
-    The single plate renderer for both workflows, so what a user sees does not depend on
-    which one they picked (`decisions.md` 045).
+    The single plate renderer for every method, so what a user sees does not depend on which
+    one they picked (`decisions.md` 045). With `slot_for_all`, returns an empty slot beside the
+    download, for the caller to fill with every plate's scheme once all plates are drawn.
     """
     if not samples_and_wells:
         st.warning("No wells assigned yet.")
@@ -193,13 +196,16 @@ def plate_preview(
             usable = plate.default_layout(plate=plate_type)
             st.dataframe(usable.style.map(plate.highlight(set(wells))), width="stretch")
 
-    st.download_button(
-        label="Download samples and wells setup",
-        data=json.dumps(samples_and_wells, indent=4),
-        file_name="samples_and_wells.json",
-        mime="application/json",
-        key=f"saw_download_{plate_type}_{len(samples_and_wells)}_{key_suffix}",
-    )
+    this_plate, all_plates = st.columns(2)
+    with this_plate:
+        st.download_button(
+            label="Download samples and wells setup for current plate",
+            data=json.dumps(samples_and_wells, indent=4),
+            file_name=f"samples_and_wells_{plate_name}.json" if plate_name else "samples_and_wells.json",
+            mime="application/json",
+            key=f"saw_download_{plate_type}_{len(samples_and_wells)}_{key_suffix}",
+        )
+    return all_plates.empty() if slot_for_all else None
 
 
 def editable_plate(
@@ -330,14 +336,9 @@ def report_path(result, pixel_size_um: float | None, label: str | None = None) -
 
 
 def extras_step() -> None:
-    """Extra #1: generate QuPath classes from two categoricals."""
+    """Extra #1: generate QuPath classes from two categoricals. Lives in the sidebar's Extras tab."""
     st.markdown("""
-                # Extras to make your life easier :D
-                 - Create Qupath classes
-                """)
-    st.divider()
-    st.markdown("""
-                ## Extra #1 : Create QuPath classes from categoricals
+                #### Create QuPath classes from categoricals
                 Creating many QuPath classes can be tedious, and is very error prone, especially for large projects.
                 This tool takes in two lists of categoricals, and a number for replicates, and create a class for every permutation.
 

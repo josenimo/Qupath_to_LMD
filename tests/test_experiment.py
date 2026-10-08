@@ -123,12 +123,12 @@ def test_the_download_follows_the_cutting_order(experiment, order, folder):
     assert len(xmls) == 4 and any(name.startswith(folder) for name in xmls), (
         f"Cutting {order.value} by {order.value} should put the files under {folder}…, got {xmls}."
     )
-    for expected in ("samples.csv", "plate_P1.csv", "plate_P2.csv", "HOW_TO_CUT.txt", "provenance.json"):
+    for expected in ("samples.csv", "plate_P1.csv", "plate_P2.csv", "COLLECTION_PLAN.txt", "provenance.json"):
         assert expected in names, f"{expected} is missing from the download."
 
-    steps = zipfile.ZipFile(io.BytesIO(bundle.getvalue())).read("HOW_TO_CUT.txt").decode()
+    steps = zipfile.ZipFile(io.BytesIO(bundle.getvalue())).read("COLLECTION_PLAN.txt").decode()
     for name in xmls:
-        assert name in steps, f"HOW_TO_CUT.txt never tells the user to import {name}."
+        assert name in steps, f"COLLECTION_PLAN.txt never tells the user to import {name}."
 
 
 def test_a_slide_with_nothing_for_a_plate_gets_no_file():
@@ -149,3 +149,26 @@ def test_a_slide_with_nothing_for_a_plate_gets_no_file():
         f"Each class exists on one slide only, so two .xml files cut something; got {len(cuts)}. An "
         "empty file would make the user mount a slide to cut nothing."
     )
+
+
+def test_an_experiment_download_loads_back_into_the_plates_stage(experiment):
+    """`samples_and_wells.json` from a download is how a user returns to change a plate later."""
+    import json
+
+    _cuts, _pooled, assignment = experiment
+    written = json.dumps(plate.per_plate(assignment))
+    reloaded = plate.assignment_from_scheme(plate.parse_saw_file(io.StringIO(written)))
+    assert reloaded == assignment, (
+        "The samples-and-wells file of a two-plate download did not load back as the same plates "
+        "and wells, so the experiment could not be reopened for changes."
+    )
+
+
+def test_a_one_plate_file_still_loads_as_plate_one():
+    assert plate.assignment_from_scheme({"Tumor": "C3"}) == {"Tumor": ("P1", "C3")}
+
+
+@pytest.mark.parametrize("bad", [{"P1": {"Tumor": "C3"}, "Stroma": "C5"}, {"plate one": {"Tumor": "C3"}}])
+def test_a_malformed_plate_file_is_refused_with_a_reason(bad):
+    with pytest.raises(plate.SawParseError):
+        plate.assignment_from_scheme(bad)

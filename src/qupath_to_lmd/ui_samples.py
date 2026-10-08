@@ -87,39 +87,38 @@ def pooled_statistics(per_slide: dict[str, pandas.DataFrame]) -> pandas.DataFram
 def class_step(context: SlidesContext) -> list[str]:
     """What each class holds and what it looks like, then the classes to collect.
 
-    One slide: the table beside the picture, as it has always been (`decisions.md` 071). Several:
-    the table gains a column per slide, so a class missing from a slide is visible at once.
+    The table is full width with the picture below it (`decisions.md` 079). With several slides
+    it gains a column per slide, so a class missing from a slide is visible at once.
     """
     st.markdown("### Classes")
     scales = context.pixel_sizes()
     per_slide = class_statistics(context, scales)
 
-    numbers, picture = st.columns([1, 2], gap="medium")
-    with numbers:
-        if context.several:
-            table = _class_table_across(per_slide)
-            ui_shared.show_amounts(table)
-        else:
-            _scale_sentence(context.slides[0], scales[context.names[0]])
-            table = next(iter(per_slide.values()))
-            ui_shared.show_amounts(stats.for_display(table))
+    # Full width, then the picture below: beside a picture the table was a third of the page and
+    # had to be scrolled sideways, worst of all with a column per slide (`decisions.md` 079).
+    if context.several:
+        ui_shared.show_amounts(_class_table_across(per_slide))
+    else:
+        _scale_sentence(context.slides[0], scales[context.names[0]])
+        ui_shared.show_amounts(stats.for_display(next(iter(per_slide.values()))))
 
-        all_classes = sorted(set().union(*(set(t.index) for t in per_slide.values())))
-        remembered = [name for name in (st.session_state.selected_classes or []) if name in all_classes]
-        selected = st.multiselect(
-            "Classes to collect",
-            options=all_classes,
-            default=remembered or all_classes,
-            help="Everything after this step works only on the classes you keep here.",
-        )
-        if selected != st.session_state.selected_classes:
-            st.session_state.selected_classes = selected
-            logger.info(f"Classes selected: {selected}")
+    all_classes = sorted(set().union(*(set(t.index) for t in per_slide.values())))
+    remembered = [name for name in (st.session_state.selected_classes or []) if name in all_classes]
+    selected = st.multiselect(
+        "Classes to collect",
+        options=all_classes,
+        default=remembered or all_classes,
+        help="Everything after this step works only on the classes you keep here.",
+    )
+    if selected != st.session_state.selected_classes:
+        st.session_state.selected_classes = selected
+        logger.info(f"Classes selected: {selected}")
 
-        _summarise_selection(per_slide, selected)
-        if context.several:
-            _name_partial_classes(per_slide, selected)
+    _summarise_selection(per_slide, selected)
+    if context.several:
+        _name_partial_classes(per_slide, selected)
 
+    picture, _margin = st.columns([2, 1])
     with picture:
         if context.several:
             tabs = st.tabs(context.names)

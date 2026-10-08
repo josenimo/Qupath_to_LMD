@@ -208,8 +208,12 @@ def calibration_step(read: list[slides.Slide]) -> dict[str, tuple[list[str], num
 
     st.caption(
         "Each slide is mounted and calibrated on its own, so each has its own three points. "
-        "Where a slide has points with the same names as the first, they are chosen for you."
+        "Where a slide has points with the same names as the first, they are suggested — check "
+        "and confirm every slide."
     )
+    # The ticks sit above the tabs rather than in their labels: Streamlit tabs take no key, so
+    # relabelling one can send the user back to the first tab after every confirmation.
+    st.markdown("   ·   ".join(f"{'✅' if is_confirmed(slide) else '⬜'} {slide.name}" for slide in read))
     tabs = st.tabs([slide.name for slide in read])
     suggestion = None
     for tab, slide in zip(tabs, read, strict=True):
@@ -217,6 +221,17 @@ def calibration_step(read: list[slides.Slide]) -> dict[str, tuple[list[str], num
             calibration[slide.name] = _calibrate(slide, suggestion=suggestion, several=True)
             suggestion = suggestion or calibration[slide.name][0]
     return calibration
+
+
+def _confirm_key(slide: slides.Slide, chosen: list[str]) -> str:
+    """Tied to the points chosen, so changing any of them withdraws the confirmation."""
+    return f"calib_confirmed_{slide.name}_{'|'.join(chosen)}"
+
+
+def is_confirmed(slide: slides.Slide) -> bool:
+    """Whether the user confirmed this slide's current calibration points (as of the last run)."""
+    chosen = [st.session_state.get(f"calib_{slide.name}_{n}") for n in range(3)]
+    return None not in chosen and bool(st.session_state.get(_confirm_key(slide, chosen)))
 
 
 def _calibrate(slide: slides.Slide, suggestion: list[str] | None, several: bool):
@@ -276,6 +291,15 @@ def _calibrate(slide: slides.Slide, suggestion: list[str] | None, several: bool)
             "outside it get distorted by the coordinate transform, so you may cut the wrong "
             "tissue. Consider calibration points closer to your annotations."
         )
+    st.checkbox(
+        "These are the right calibration points" + (f" for {slide.name}" if several else ""),
+        key=_confirm_key(slide, chosen),
+        help=(
+            "The points above are a suggestion — the first three in the file, or the names you "
+            "chose on the first slide. A wrong or swapped point maps every shape to the wrong "
+            "place on the stage, so nothing goes further until you have looked and confirmed."
+        ),
+    )
     return chosen, triangle.calibration_array
 
 
@@ -376,4 +400,13 @@ def render() -> SlidesContext | None:
         return None
     calibration = calibration_step(read)
     st.session_state.calibration = {name: names for name, (names, _array) in calibration.items()}
+
+    waiting = [slide.name for slide in read if not st.session_state.get(_confirm_key(slide, calibration[slide.name][0]))]
+    if waiting:
+        # Not a stop: nothing is wrong, the user has simply not looked yet (`decisions.md` 079).
+        st.info(
+            "Confirm the calibration points to continue"
+            + (f" — still to confirm: {', '.join(waiting)}." if len(read) > 1 else ".")
+        )
+        return None
     return SlidesContext(slides=read, calibration=calibration)
