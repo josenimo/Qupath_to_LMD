@@ -120,3 +120,15 @@ def test_nothing_goes_further_until_every_slide_is_confirmed(monkeypatch):
 
     _confirm_calibration(app)
     assert "## 2 · Samples" in [b.value for b in app.markdown], "Confirming every slide did not open the Samples stage."
+
+
+def test_extras_are_a_page_of_their_own_not_the_sidebar(monkeypatch):
+    """In the sidebar the extras crowded the experiment summary; they are their own page now."""
+    app = AppTest.from_file(str(REPO / "streamlit_app.py"), default_timeout=60)
+    app.run()
+    assert not any("categoricals" in block.value for block in app.sidebar.markdown), (
+        "The QuPath classes generator is back in the sidebar."
+    )
+    app.switch_page("app_pages/extras.py").run()
+    assert not app.exception, f"The Extras page raised: {[e.value for e in app.exception]}"
+    assert any("categoricals" in block.value for block in app.markdown), "The Extras page shows no classes generator."

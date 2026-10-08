@@ -190,8 +190,10 @@ def _process_experiment(context, sample_set, layout, tolerance, path_order, cut_
     st.session_state.bundle_name = f"{first}_experiment.zip"
     st.session_state.collection_image = cuts[0].result.image_path
 
-    st.write(f"**{len(cuts)} cutting files**, {sum(c.result.n_shapes for c in cuts):,} shapes in all.")
-    st.code(export.cutting_instructions(cuts, cut_order), language=None)
+    st.write(
+        f"**{len(cuts)} cutting files**, {sum(c.result.n_shapes for c in cuts):,} shapes in all. "
+        "COLLECTION_PLAN.txt in the download lists each one with its slide, plate and calibration points."
+    )
     for cut in cuts:
         ui_shared.report_path(cut.result, cut.plan.pixel_size_um, label=f"{cut.slide} → {cut.plate}")
 

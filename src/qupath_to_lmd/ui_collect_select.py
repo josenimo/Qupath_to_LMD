@@ -321,15 +321,16 @@ def _report(pooled: slides.PooledSelection, mode: budget.BudgetMode, several: bo
 
 
 def _preview(context: SlidesContext, pooled: slides.PooledSelection) -> None:
-    """What will be cut, coloured by replicate, over every shape — per slide."""
+    """What will be cut, coloured by class as in the classes picture, over every shape — per slide."""
+    palette = ui_samples.class_palette(context)
 
     def draw(slide) -> None:
         replicate_of = pooled.per_slide[slide.name].replicate_of.reindex(slide.gdf.index)
-        labels = replicate_of.map(lambda value: f"replicate {int(value)}" if pandas.notna(value) else None)
+        labels = slide.gdf[CLASS_NAME].where(replicate_of.notna())
         with st.spinner("Drawing the selection..."):
             figure = plot.plot_shapes(
                 slide.gdf, labels=labels, calibration_array=context.calibration[slide.name][1],
-                title=f"What will be cut on {slide.name}, coloured by replicate",
+                title=f"What will be cut on {slide.name}", colors=palette,
             )
         st.pyplot(figure, width="content")
 
@@ -340,8 +341,8 @@ def _preview(context: SlidesContext, pooled: slides.PooledSelection) -> None:
     else:
         draw(context.slides[0])
     st.caption(
-        "Classes are merged here so you can judge whether the replicates are spread and "
-        "comparable across the tissue."
+        "Coloured by class, in the same colours as the classes picture above; grey is not "
+        "collected. Which replicate each shape goes to is in the table above."
     )
 
 

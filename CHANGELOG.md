@@ -19,7 +19,9 @@ Terms are defined in [GLOSSARY.md](GLOSSARY.md); the reasoning behind each choic
   into the Plates stage to change an experiment later.
 - *Order to cut in* is now **Organise the download**: it only arranges folders and names; the
   `.xml` files are the same either way. `HOW_TO_CUT.txt` is now `COLLECTION_PLAN.txt`.
-- **Extras** live in the sidebar, in their own tab.
+- **Extras** have their own page — *Extras* at the top, beside *Collect*.
+- **Every picture colours a class the same way** (tab20), including the preview of what will be
+  cut, which is now coloured by class.
 - New demo data, `demo_Qupath_project/demo1/`: two patients, three serial sections each.
 
 ### Several slides, several plates, one page

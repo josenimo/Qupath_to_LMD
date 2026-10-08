@@ -12,7 +12,7 @@ import pandas
 from loguru import logger
 from matplotlib import colormaps
 from matplotlib.collections import PathCollection, PolyCollection
-from matplotlib.colors import to_rgb
+from matplotlib.colors import to_hex, to_rgb
 from matplotlib.figure import Figure
 from matplotlib.lines import Line2D
 from matplotlib.path import Path
@@ -20,8 +20,17 @@ from shapely.geometry.polygon import orient
 
 from qupath_to_lmd.model import CLASS_NAME
 
-# Okabe-Ito, which stays distinguishable for the common forms of colour blindness.
-PALETTE = ["#E69F00", "#56B4E9", "#009E73", "#0072B2", "#D55E00", "#CC79A7", "#F0E442"]
+# tab20, Jose's choice: enough colours that a class rarely shares one (`decisions.md` 080).
+# tab20 comes in pairs, a strong and a light shade of each hue, so the strong shades go first:
+# the first ten classes then all differ in hue. Its two greys are left out — grey is how the app
+# draws what is not collected, and a grey class would read as excluded.
+CLASS_COLORMAP = "tab20"
+_GREYS = (14, 15)
+PALETTE = [
+    to_hex(colormaps[CLASS_COLORMAP](index))
+    for index in [*range(0, 20, 2), *range(1, 20, 2)]
+    if index not in _GREYS
+]
 MUTED = "#dcdcdc"
 MUTED_EDGE = "#b4b4b4"
 
@@ -39,7 +48,9 @@ SHAPE_LIMIT = 20_000
 # outlines are the replicate, shaded toward black. Those two factors were chosen by scanning
 # them against the WCAG contrast of every fill-outline pair and the RGB separation of every pair
 # of outlines: they give contrast 1.78 everywhere, with outlines 0.198 apart from each other.
-CLASS_FILL_TINT = 0.55
+# 0.6 rather than the 0.55 measured for Okabe-Ito: with tab20 fills 0.55 gives a worst contrast of
+# 1.66, under the floor; 0.6 gives 1.81 with the replicate outlines unchanged (`decisions.md` 080).
+CLASS_FILL_TINT = 0.6
 REPLICATE_SHADE = 0.25
 
 # tab10 rather than tab20: shading compresses a palette, and tab20's twenty entries end up too
@@ -59,7 +70,11 @@ REGION_FILL_ALPHA = 0.85
 
 
 def class_colors(classes: list[str]) -> dict[str, str]:
-    """Stable colour per class: sorted, so a class keeps its colour across redraws."""
+    """Stable colour per class: sorted, so a class keeps its colour across redraws.
+
+    Pass *every* class of the experiment and hand the result to each plot: a plot that sorted
+    only the classes it draws would give a class a different colour whenever the set differs.
+    """
     return {name: PALETTE[i % len(PALETTE)] for i, name in enumerate(sorted(classes))}
 
 
@@ -106,6 +121,7 @@ def plot_shapes(
     calibration_array: numpy.ndarray | None = None,
     title: str | None = None,
     figsize: tuple[float, float] = (10.0, 7.5),
+    colors: dict[str, str] | None = None,
 ) -> Figure:
     """Draw shapes coloured by a label, with everything else grey.
 
@@ -121,6 +137,8 @@ def plot_shapes(
         calibration_array: 3x2 array; drawn as a dashed triangle if given.
         title: optional heading.
         figsize: inches.
+        colors: colour per label, from `class_colors` over the whole experiment, so a class looks
+            the same in every picture. Defaults to the labels in this plot.
     """
     figure = Figure(figsize=figsize, layout="constrained")
     axes = figure.add_subplot()
@@ -131,7 +149,7 @@ def plot_shapes(
 
     classes = sorted(labels.dropna().unique())
     included = classes if included is None else included
-    colors = class_colors(classes)
+    colors = {**class_colors(classes), **(colors or {})}
     as_dots = len(gdf) > SHAPE_LIMIT
     logger.info(f"Plotting {len(gdf)} shapes as {'centroids' if as_dots else 'polygons'}")
 
@@ -246,6 +264,7 @@ def plot_regions_and_circles(
     calibration_array: numpy.ndarray | None = None,
     title: str | None = None,
     figsize: tuple[float, float] = (11.0, 8.5),
+    colors: dict[str, str] | None = None,
 ) -> Figure:
     """The regions as a tissue map, with what will be cut drawn on top of them.
 
@@ -263,13 +282,15 @@ def plot_regions_and_circles(
         calibration_array: 3x2 array; drawn as a dashed triangle if given.
         title: optional heading.
         figsize: inches.
+        colors: the experiment-wide class palette from `class_colors`. Defaults to these classes.
     """
     figure = Figure(figsize=figsize, layout="constrained")
     axes = figure.add_subplot()
 
     classes = sorted(regions[CLASS_NAME].dropna().unique())
-    fills = class_fill_colors(classes)
-    strong = class_colors(classes)
+    # `colors`, when given, is the experiment-wide palette, so a class matches every other picture.
+    strong = {**class_colors(classes), **(colors or {})}
+    fills = {name: _tint(color, CLASS_FILL_TINT) for name, color in strong.items()}
 
     for class_name in classes:
         paths = polygon_paths(regions[regions[CLASS_NAME] == class_name])
