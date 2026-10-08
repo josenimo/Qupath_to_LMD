@@ -257,7 +257,7 @@ def render(sample_set: SampleSet) -> PlateLayout | None:
     containers = st.tabs(names) if several else [st.container()]
     for container, name in zip(containers, names, strict=True):
         with container:
-            wells = settings["first_plate"] if name == "P1" else settings["usable"]
+            wells = settings["first_plate"] if name == plate.plate_names(1, plate_type)[0] else settings["usable"]
             scheme = ui_shared.editable_plate(schemes[name], plate_type, key_suffix=name)
             slots.append(
                 ui_shared.plate_preview(

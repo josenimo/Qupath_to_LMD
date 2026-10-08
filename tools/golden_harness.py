@@ -253,9 +253,17 @@ def run_plates_case(source, replicates=1, per_replicate=1) -> dict[str, str]:
     cuts = slides.cuts_for_experiment(samples, read, assignment, calibration, plate="96", session_id="golden")
     artefacts = {}
     for cut in cuts:
-        artefacts[f"{cut.plate}.xml"] = cut.result.xml
-        artefacts[f"{cut.plate}.csv"] = cut.result.csv
+        artefacts[f"{_golden_label(cut.plate)}.xml"] = cut.result.xml
+        artefacts[f"{_golden_label(cut.plate)}.csv"] = cut.result.csv
     return artefacts
+
+
+def _golden_label(name: str) -> str:
+    """`Plate1` is filed as `P1`.
+
+    The reference files predate collector names, and renaming them would be editing tools/golden/.
+    """
+    return f"P{name[len('Plate'):]}" if name.startswith("Plate") else name
 
 
 def _run(kind: str = "annotations", **kwargs) -> dict[str, str]:

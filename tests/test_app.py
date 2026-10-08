@@ -93,13 +93,13 @@ def test_two_slides_on_two_plates_give_four_cutting_files(monkeypatch):
     files = _contents(app)
     xmls = sorted(name for name in files if name.endswith(".xml"))
     assert len(xmls) == 4, f"Two slides on two plates should give four .xml files, got {xmls}."
-    for expected in ("samples.csv", "plate_P1.csv", "plate_P2.csv", "COLLECTION_PLAN.txt"):
+    for expected in ("samples.csv", "plate_Plate1.csv", "plate_Plate2.csv", "COLLECTION_PLAN.txt"):
         assert expected in files, f"{expected} is missing from the experiment download."
 
 
 def test_regions_across_two_slides_run_to_a_download(monkeypatch):
     files = _contents(_run(monkeypatch, ["Single_cells.geojson", "Single_cells.geojson"], "regions"))
-    assert {"slide_Single_cells/Single_cells__P1.xml", "slide_Single_cells_2/Single_cells_2__P1.xml"} <= set(files), (
+    assert {"slide_Single_cells/Single_cells__Plate1.xml", "slide_Single_cells_2/Single_cells_2__Plate1.xml"} <= set(files), (
         f"Each copy of the slide should get its own .xml: {sorted(files)}"
     )
 

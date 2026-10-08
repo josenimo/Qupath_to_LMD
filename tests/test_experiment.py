@@ -33,7 +33,7 @@ def test_one_plate_is_exactly_the_layout_the_app_always_made(randomize):
     wells = plate.acceptable_wells("384", margins=1)
     old = plate.assign_wells(GROUPS, plate.wells_from(wells, "C5"), randomize=randomize, seed=4)
     new = plate.assign_to_plates(GROUPS, wells, 1, randomize=randomize, seed=4, start_well="C5")
-    assert new == {group: ("P1", well) for group, well in old.items()}, (
+    assert new == {group: ("Plate1", well) for group, well in old.items()}, (
         "With one plate the assignment changed. Every single-plate collection would land in "
         "different wells from the ones it lands in today."
     )
@@ -43,20 +43,20 @@ def test_balanced_puts_every_class_on_every_plate():
     """Filling plate 1 first would put whole classes on one plate, so a plate effect would read
     as a difference between classes."""
     assignment = plate.assign_to_plates(GROUPS, SIX_WELLS, 2, PlateDistribution.BALANCED)
-    for name in ("P1", "P2"):
+    for name in ("Plate1", "Plate2"):
         classes = {group.rsplit("_r", 1)[0] for group, (where, _) in assignment.items() if where == name}
         assert classes == {"Immune", "Stroma", "Tumor"}, (
             f"Plate {name} holds only {sorted(classes)}. Balanced plates must each hold every class "
             "when there are at least as many replicates as plates."
         )
-    counts = [sum(where == name for where, _ in assignment.values()) for name in ("P1", "P2")]
+    counts = [sum(where == name for where, _ in assignment.values()) for name in ("Plate1", "Plate2")]
     assert max(counts) - min(counts) <= 1, f"Balanced plates hold {counts} samples — not balanced."
 
 
 def test_sequential_fills_the_first_plate_before_the_next():
     assignment = plate.assign_to_plates(GROUPS, SIX_WELLS, 2, PlateDistribution.SEQUENTIAL)
-    on_first = [group for group, (where, _) in assignment.items() if where == "P1"]
-    assert on_first == sorted(GROUPS)[:6], f"Sequential put {on_first} on P1 instead of the first six."
+    on_first = [group for group, (where, _) in assignment.items() if where == "Plate1"]
+    assert on_first == sorted(GROUPS)[:6], f"Sequential put {on_first} on Plate1 instead of the first six."
 
 
 @pytest.mark.parametrize("distribution", list(PlateDistribution))
@@ -102,7 +102,7 @@ def test_every_slide_and_plate_with_something_to_cut_gets_one_xml(experiment):
     cuts, _pooled, _assignment = experiment
     pairs = sorted((cut.slide, cut.plate) for cut in cuts)
     assert pairs == [
-        ("Single_cells", "P1"), ("Single_cells", "P2"), ("multiclass_cells", "P1"), ("multiclass_cells", "P2"),
+        ("Single_cells", "Plate1"), ("Single_cells", "Plate2"), ("multiclass_cells", "Plate1"), ("multiclass_cells", "Plate2"),
     ], f"Expected one .xml per slide and plate, got {pairs}."
     for cut in cuts:
         assert set(cut.plan.wells_used) <= {well for where, well in _assignment.values() if where == cut.plate}, (
@@ -111,7 +111,7 @@ def test_every_slide_and_plate_with_something_to_cut_gets_one_xml(experiment):
 
 
 @pytest.mark.parametrize(
-    ("order", "folder"), [(export.CutOrder.BY_SLIDE, "slide_Single_cells/"), (export.CutOrder.BY_PLATE, "plate_P1/")]
+    ("order", "folder"), [(export.CutOrder.BY_SLIDE, "slide_Single_cells/"), (export.CutOrder.BY_PLATE, "plate_Plate1/")]
 )
 def test_the_download_follows_the_cutting_order(experiment, order, folder):
     cuts, pooled, assignment = experiment
@@ -123,7 +123,7 @@ def test_the_download_follows_the_cutting_order(experiment, order, folder):
     assert len(xmls) == 4 and any(name.startswith(folder) for name in xmls), (
         f"Cutting {order.value} by {order.value} should put the files under {folder}…, got {xmls}."
     )
-    for expected in ("samples.csv", "plate_P1.csv", "plate_P2.csv", "COLLECTION_PLAN.txt", "provenance.json"):
+    for expected in ("samples.csv", "plate_Plate1.csv", "plate_Plate2.csv", "COLLECTION_PLAN.txt", "provenance.json"):
         assert expected in names, f"{expected} is missing from the download."
 
     steps = zipfile.ZipFile(io.BytesIO(bundle.getvalue())).read("COLLECTION_PLAN.txt").decode()
@@ -165,7 +165,7 @@ def test_an_experiment_download_loads_back_into_the_plates_stage(experiment):
 
 
 def test_a_one_plate_file_still_loads_as_plate_one():
-    assert plate.assignment_from_scheme({"Tumor": "C3"}) == {"Tumor": ("P1", "C3")}
+    assert plate.assignment_from_scheme({"Tumor": "C3"}) == {"Tumor": ("Plate1", "C3")}
 
 
 @pytest.mark.parametrize("bad", [{"P1": {"Tumor": "C3"}, "Stroma": "C5"}, {"plate one": {"Tumor": "C3"}}])

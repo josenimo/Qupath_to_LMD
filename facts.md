@@ -236,9 +236,9 @@ The reading and QC below is unchanged; it now runs once per uploaded file.
    updates live (078). `ui_shared.plate_preview` is the only plate renderer (045).
 2.3 **Custom samples-and-wells upload** — an expander in the Plates stage, for every method;
    overrides the generated layout. `plate.assignment_from_scheme` reads both shapes the app
-   writes: `{sample: well}` (plate P1) and `{"P1": {sample: well}, "P2": …}` — so the
+   writes: `{sample: well}` (the first collector) and `{"Plate1": {sample: well}, "Plate2": …}` (or `TubeHolder1`, `Strip1`; files keyed `P1` from before 081 load as plates) — so the
    `samples_and_wells.json` of any download, one plate or several, loads back in for changes.
-   Each plate's scheme downloads as `samples_and_wells_P<n>.json`; with several plates a second
+   Each plate's scheme downloads as `samples_and_wells_Plate<n>.json`; with several plates a second
    button beside it downloads all of them (`samples_and_wells_all_plates.json`), filled after every
    tab so hand edits on any plate are in it.
    `plate.parse_saw_file` reads a `.txt`/`.json` containing a **Python dict literal** and
@@ -852,12 +852,12 @@ offered are the real ones — a larger smallest circle, or a lower smoothing tol
 ## Several plates (round five)
 
 - `plate.assign_to_plates(groups, wells, n_plates, distribution, randomize, seed, start_well)`
-  returns `{group: (plate, well)}`, plates named `P1`, `P2`, …. **One plate returns exactly
+  returns `{group: (plate, well)}`, collectors named `Plate1`, `Plate2`, … (`TubeHolder1`, `Strip1` for the holders, `decisions.md` 081). **One plate returns exactly
   `assign_wells`**, tested with and without randomizing and with a start well, so single-plate
-  collections land where they always have. `start_well` applies to P1 only.
+  collections land where they always have. `start_well` applies to the first collector only.
 - **BALANCED** (default, `decisions.md` 076) deals each class's replicates round-robin over the
   plates, each class starting on the plate with the most room. Every plate holds every class when
-  replicates ≥ plates. **SEQUENTIAL** fills P1 with the first sorted groups, then P2. Within a plate
+  replicates ≥ plates. **SEQUENTIAL** fills the first collector with the first sorted groups, then the second. Within a plate
   wells come from `assign_wells`. Groups that fit nowhere are absent from the result for the caller
   to name.
 - `plates_needed(n_samples, usable_wells, first_plate_wells)` — the first plate may be short when

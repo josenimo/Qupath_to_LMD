@@ -167,9 +167,19 @@ class PlateDistribution(str, Enum):
     SEQUENTIAL = "sequential"
 
 
-def plate_names(n_plates: int) -> list[str]:
-    """`P1`, `P2`, … — the names plates carry in the interface and the download."""
-    return [f"P{number}" for number in range(1, n_plates + 1)]
+def plate_names(n_plates: int, plate: str = "384") -> list[str]:
+    """`Plate1`, `TubeHolder1`, `Strip1`, … — the names collectors carry on screen and in files.
+
+    Explicit, because most experiments have only a few (`decisions.md` 081).
+    """
+    prefix = collector(plate).name_prefix
+    return [f"{prefix}{number}" for number in range(1, n_plates + 1)]
+
+
+def _number_of(name: str) -> int:
+    """`Plate10` is collector 10."""
+    digits = name[len(name.rstrip("0123456789")) :]
+    return int(digits) if digits else 0
 
 
 def plates_needed(n_samples: int, usable_wells: int, first_plate_wells: int | None = None) -> int:
@@ -201,8 +211,9 @@ def assign_to_plates(
     randomize: bool = False,
     seed: int = 0,
     start_well: str | None = None,
+    plate: str = "384",
 ) -> dict[str, tuple[str, str]]:
-    """Map each group to a plate and a well.
+    """Map each group to a collector and a position.
 
     BALANCED deals each class's replicates round-robin over the plates, each class starting on
     whichever plate has the most room, so every plate holds every class where the replicate count
@@ -216,7 +227,7 @@ def assign_to_plates(
     """
     wells_by_plate = {
         name: (wells_from(wells, start_well) if position == 0 else list(wells))
-        for position, name in enumerate(plate_names(max(1, n_plates)))
+        for position, name in enumerate(plate_names(max(1, n_plates), plate))
     }
     if len(wells_by_plate) == 1:
         (name, plate_wells), = wells_by_plate.items()
@@ -258,29 +269,59 @@ def assign_to_plates(
     return assignment
 
 
-def assignment_from_scheme(parsed: dict) -> dict[str, tuple[str, str]]:
-    """Turn a loaded samples-and-wells file into a plate assignment.
+def _named(name: str, prefix: str) -> bool:
+    return name.startswith(prefix) and name[len(prefix) :].isdigit()
 
-    Reads both shapes the app writes: one plate, `{"Tumor_r1": "C3", ...}`, which is plate P1;
-    and several, `{"P1": {"Tumor_r1": "C3"}, "P2": {...}}`, which is `samples_and_wells.json` from
-    an experiment download and the all-plates button of the Plates stage.
+
+def assignment_from_scheme(parsed: dict, plate: str = "384") -> dict[str, tuple[str, str]]:
+    """Turn a loaded samples-and-wells file into an assignment to collectors of type `plate`.
+
+    Reads both shapes the app writes: one collector, `{"Tumor_r1": "C3", ...}`, which is the first
+    one; and several, `{"Plate1": {"Tumor_r1": "C3"}, "Plate2": {...}}`, which is
+    `samples_and_wells.json` from an experiment download and the all-collectors button of Stage 3.
+    Files from before collectors had names, keyed `P1`, `P2`, load as plates.
 
     Raises:
-        SawParseError: a mixture of the two, or plate names that are not `P1`, `P2`, …
+        SawParseError: a mixture of the two, names for another kind of collector, or names that
+            are not `Plate1`, `Plate2`, … (or the chosen collector's equivalent).
     """
+    chosen = collector(plate)
     nested = [isinstance(value, dict) for value in parsed.values()]
     if not any(nested):
-        return {str(sample): ("P1", str(well)) for sample, well in parsed.items()}
+        first = plate_names(1, plate)[0]
+        return {str(sample): (first, str(well)) for sample, well in parsed.items()}
     if not all(nested):
         raise SawParseError(
-            "The file mixes plates and wells at the top level. Use either {sample: well} for one "
-            "plate, or {plate: {sample: well}} for several."
+            f"The file mixes {chosen.noun}s and {chosen.position}s at the top level. Use either "
+            f"{{sample: {chosen.position}}} for one {chosen.noun}, or "
+            f"{{{chosen.noun}: {{sample: {chosen.position}}}}} for several."
         )
     names = [str(name) for name in parsed]
-    if not all(name[:1] == "P" and name[1:].isdigit() for name in names):
-        raise SawParseError(f"Plates must be named P1, P2, …; this file has {names}.")
+    renamed = {}
+    for name in names:
+        if _named(name, chosen.name_prefix):
+            renamed[name] = name
+        elif chosen.numbered and _named(name, "P"):
+            renamed[name] = f"{chosen.name_prefix}{name[1:]}"
+        else:
+            other = next(
+                (
+                    candidate for candidate in COLLECTORS.values()
+                    if _named(name, candidate.name_prefix) or (candidate.numbered and _named(name, "P"))
+                ),
+                None,
+            )
+            if other is not None:
+                raise SawParseError(
+                    f"This file is for {other.noun}s ({name}), but a {chosen.label} is chosen. "
+                    "Change the collector, or use a file made for it."
+                )
+            raise SawParseError(
+                f"{chosen.noun.capitalize()}s must be named {chosen.name_prefix}1, "
+                f"{chosen.name_prefix}2, …; this file has {names}."
+            )
     return {
-        str(sample): (str(name), str(well))
+        str(sample): (renamed[str(name)], str(well))
         for name, scheme in parsed.items()
         for sample, well in scheme.items()
     }
@@ -291,7 +332,7 @@ def per_plate(assignment: dict[str, tuple[str, str]]) -> dict[str, dict[str, str
     schemes: dict[str, dict[str, str]] = {}
     for group, (plate_name, well) in assignment.items():
         schemes.setdefault(plate_name, {})[group] = well
-    return dict(sorted(schemes.items(), key=lambda item: int(item[0][1:])))
+    return dict(sorted(schemes.items(), key=lambda item: _number_of(item[0])))
 
 
 def sample_layout(

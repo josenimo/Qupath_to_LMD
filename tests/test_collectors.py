@@ -112,3 +112,79 @@ def test_positions_that_do_not_exist_on_the_collector_are_invalid():
 def test_an_unknown_collector_is_refused():
     with pytest.raises(ValueError):
         plate.collector("1536")
+
+
+def test_collectors_are_named_explicitly():
+    assert plate.plate_names(2, "384") == ["Plate1", "Plate2"]
+    assert plate.plate_names(1, "tubes") == ["TubeHolder1"]
+    assert plate.plate_names(2, "strip") == ["Strip1", "Strip2"], (
+        "Collector names go into file names and COLLECTION_PLAN.txt; a vague name is how a user "
+        "loads the wrong holder."
+    )
+
+
+def test_thirteen_samples_fill_four_balanced_tube_holders():
+    groups = (
+        [f"Tumor_r{n}" for n in range(1, 6)]
+        + [f"Stroma_r{n}" for n in range(1, 5)]
+        + [f"Immune_r{n}" for n in range(1, 5)]
+    )
+    tubes = plate.acceptable_wells("tubes")
+    assignment = plate.assign_to_plates(groups, tubes, plate.plates_needed(len(groups), len(tubes)), plate="tubes")
+    assert set(assignment) == set(groups), f"Samples without a tube: {set(groups) - set(assignment)}"
+    holders = {holder for holder, _ in assignment.values()}
+    assert holders == {"TubeHolder1", "TubeHolder2", "TubeHolder3", "TubeHolder4"}, holders
+    assert {tube for _, tube in assignment.values()} <= set("ABCD"), (
+        "A sample was given a position the tube holder does not have."
+    )
+    per_holder = [sum(where == holder for where, _ in assignment.values()) for holder in holders]
+    assert max(per_holder) <= 4, f"A holder was given more than four tubes: {per_holder}"
+
+
+@pytest.mark.parametrize("key", ["384", "96", "tubes", "strip"])
+def test_collector_names_round_trip_through_a_file(key):
+    positions = plate.acceptable_wells(key)
+    groups = [f"Tumor_r{n}" for n in range(1, len(positions) + 3)]
+    assignment = plate.assign_to_plates(groups, positions, 2, plate=key)
+    reloaded = plate.assignment_from_scheme(plate.per_plate(assignment), plate=key)
+    assert reloaded == assignment, (
+        f"The samples-and-wells file of a two-collector {key} download did not load back as the "
+        "same collectors and positions, so the experiment could not be reopened for changes."
+    )
+
+
+def test_ten_plates_sort_after_two():
+    schemes = plate.per_plate({"x": ("Plate10", "A1"), "y": ("Plate2", "A1")})
+    assert list(schemes) == ["Plate2", "Plate10"], (
+        f"Collectors came out as {list(schemes)}; instructions and tabs would list them out of order."
+    )
+
+
+def test_an_old_p1_file_loads_as_plate1():
+    loaded = plate.assignment_from_scheme({"P1": {"T": "C3"}, "P2": {"S": "C3"}}, plate="384")
+    assert loaded == {"T": ("Plate1", "C3"), "S": ("Plate2", "C3")}, (
+        f"An experiment downloaded before collectors existed loaded as {loaded}; it must reopen as "
+        "the same plates."
+    )
+
+
+def test_a_flat_file_goes_to_the_first_collector():
+    assert plate.assignment_from_scheme({"T": "C"}, plate="tubes") == {"T": ("TubeHolder1", "C")}
+
+
+@pytest.mark.parametrize(
+    ("parsed", "chosen", "names"),
+    [
+        ({"TubeHolder1": {"T": "A"}}, "384", "tube holder"),
+        ({"P1": {"T": "C3"}}, "tubes", "Eppendorf tube holder"),
+        ({"Plate1": {"T": "C3"}}, "strip", "8-well strip holder"),
+    ],
+)
+def test_a_file_for_another_collector_is_refused_by_name(parsed, chosen, names):
+    with pytest.raises(plate.SawParseError) as raised:
+        plate.assignment_from_scheme(parsed, plate=chosen)
+    message = str(raised.value)
+    assert plate.collector(chosen).label in message and names in message, (
+        f"Refused, but the message {message!r} does not say which collector the file is for and "
+        "which is chosen, so the user cannot tell what to change."
+    )
