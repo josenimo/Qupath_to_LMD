@@ -83,7 +83,7 @@ src/qupath_to_lmd/
   __init__.py                     empty
 tools/
   golden_harness.py               byte-equality regression gate
-  golden/                         21 reference artefacts, 9 cases
+  golden/                         27 reference artefacts, 11 cases
 demo_Qupath_project/              real QuPath project used as test fixture
   TD_01_verysmall_mIF.geojson     9 features: 6 annotation Polygons + 3 calibration Points
   Single_cells.geojson            131 features: 121 cells + 7 annotations + 3 Points
@@ -1138,14 +1138,17 @@ uv run python tools/golden_harness.py check      # compare against the golden fi
 uv run python tools/golden_harness.py capture    # re-bless, only when output should change
 ```
 
-Nine cases, each covering a path where a change could silently move coordinates:
+Eleven cases, each covering a path where a change could silently move coordinates:
 `annotations` (ordinary mini-bulk), `cells` (128 shapes with measurements),
 `cells_exploded` (one well per shape), `annotations_96` (different plate geometry),
 `multiclass_cells` (real QuPath 0.7.0 export shape), `regions` (Voronoi projection and merge,
 where every coordinate is computed rather than read from the file), `packing` (circles placed by
 a seeded random walk), `two_slides` (one `.xml` per slide into shared wells), `two_plates` (nine samples balanced over two
-six-well plates). Each produces an XML and a CSV, except `two_slides`, which produces one XML per
-slide, and `two_plates`, one XML and one plate map per plate — 21 artefacts.
+six-well plates), `tubes` (letter CapIDs and the one-column map of a tube holder), `strips` (nine
+samples over two 8-well strips, so collector names reach the files). Each produces an XML and a
+CSV, except `two_slides`, which produces one XML per slide, and `two_plates` and `strips`, one XML
+and one map per collector — 27 artefacts. `two_plates` files keep their `P1` labels through
+`_golden_label`, because they predate collector names (`decisions.md` 081).
 
 - `capture` rewrites **every** case, not only a new one, so after adding a case check
   `git diff tools/golden/` shows nothing but the new files before committing.
