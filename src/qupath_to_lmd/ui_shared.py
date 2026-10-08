@@ -336,9 +336,9 @@ def report_path(result, pixel_size_um: float | None, label: str | None = None) -
 
 
 def extras_step() -> None:
-    """Extra #1: generate QuPath classes from two categoricals. Lives in the sidebar's Extras tab."""
+    """Extra #1: generate QuPath classes from two categoricals. Its own page, Extras."""
     st.markdown("""
-                #### Create QuPath classes from categoricals
+                ## Create QuPath classes from categoricals
                 Creating many QuPath classes can be tedious, and is very error prone, especially for large projects.
                 This tool takes in two lists of categoricals, and a number for replicates, and create a class for every permutation.
 

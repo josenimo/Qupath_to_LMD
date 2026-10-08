@@ -135,7 +135,7 @@ def regions_step(context: SlidesContext, selected: list[str], scales: dict):
                 )
         with picture:
             with st.spinner("Drawing regions..."):
-                figure = plot.plot_regions_and_circles(patches[slide.name])
+                figure = plot.plot_regions_and_circles(patches[slide.name], colors=ui_samples.class_palette(context))
             st.pyplot(figure, width="stretch")
             st.caption("Fill colour is the class.")
 
@@ -243,12 +243,13 @@ def _request_table(classes: list[str], with_circles: bool) -> list[packing.Class
 
 def _draw(context: SlidesContext, patches: dict, circles: dict | None) -> None:
     """The tissue map with what will be cut on top: class by fill, replicate by outline."""
+    palette = ui_samples.class_palette(context)
 
     def draw(name: str) -> None:
         shown = circles.get(name) if circles else None
         replicate_of = shown[REPLICATE] if shown is not None and len(shown) else None
         with st.spinner("Drawing..."):
-            figure = plot.plot_regions_and_circles(patches[name], shown, replicate_of=replicate_of)
+            figure = plot.plot_regions_and_circles(patches[name], shown, replicate_of=replicate_of, colors=palette)
         st.pyplot(figure, width="stretch")
 
     if context.several:

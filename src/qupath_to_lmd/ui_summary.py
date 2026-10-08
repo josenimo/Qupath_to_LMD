@@ -18,18 +18,14 @@ class Summary:
     """Fills a sidebar placeholder; each stage reports in as it finishes."""
 
     placeholder: object = None
-    extras: object = None
     lines: dict[str, str] = field(default_factory=dict)
     figures: dict[str, str] = field(default_factory=dict)
 
     @classmethod
     def start(cls) -> "Summary":
-        """An empty summary in the sidebar's Experiment tab; the Extras tab is returned for filling."""
-        experiment, extras = st.sidebar.tabs(["📋 Experiment", "🧰 Extras"])
-        with experiment:
-            st.markdown("### Your experiment")
-            placeholder = st.empty()
-        summary = cls(placeholder=placeholder, extras=extras)
+        """An empty summary bound to the sidebar."""
+        st.sidebar.markdown("### Your experiment")
+        summary = cls(placeholder=st.sidebar.empty())
         summary._render()
         return summary
 

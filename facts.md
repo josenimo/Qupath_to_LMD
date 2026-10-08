@@ -175,9 +175,17 @@ sidebar summary.
   every slide is confirmed Stage 1 returns None with a note naming the slides still waiting — a
   gate, not an `st.stop()`. With several slides the ticks sit in a line above the tabs, not in the
   tab labels: `st.tabs` takes no key, so relabelling could reset the open tab.
-- **The sidebar has two tabs**: 📋 Experiment (the summary, stages marked 🔬 🧬 🧫 ✂️) and
-  🧰 Extras (the classes generator). Extras is filled before the stages, so a hard stop in a stage
-  never takes it away.
+- **Two pages, at the top** (`st.navigation(position="top")`, `decisions.md` 080): 🔬 Collect,
+  the four stages with the experiment summary in the sidebar (stages marked 🔬 🧬 🧫 ✂️), and
+  🧰 Extras, the classes generator, in `app_pages/extras.py`. A page file rather than a function
+  because `AppTest.switch_page` only opens pages by path, and the Extras test needs to. Session
+  state is shared between the pages, so visiting Extras loses nothing.
+- **One class palette per experiment**: `ui_samples.class_palette(context)` runs `plot.class_colors`
+  over every class on every slide, and every picture — classes, selection preview, regions,
+  circles — is drawn with it, so a class has one colour throughout. The selection preview is
+  coloured by class (it was by replicate); the replicate of each shape is in the table above it.
+- After processing an experiment the page no longer prints `COLLECTION_PLAN.txt`; it is in the
+  download. The cut path review per file stays.
 - **One slide on one plate downloads exactly the old bundle** (`export.build_bundle`), and
   `tests/test_app.py` compares the downloaded `.xml`/`.csv` for the demo annotations with
   `tools/golden/annotations.*` byte for byte. Anything more uses `export.build_experiment_bundle`.
@@ -249,7 +257,7 @@ The reading and QC below is unchanged; it now runs once per uploaded file.
    `samples_and_wells.json`, `provenance.json`, `<stem>_processed.geojson` (sanitised for
    QuPath re-import), `collection.png`, and the session log.
 
-**Extra #1** (sidebar, 🧰 Extras tab): generates a QuPath `classes.json` from two lists of
+**Extra #1** (the 🧰 Extras page): generates a QuPath `classes.json` from two lists of
 categoricals × replicate count, cycling 6 hard-coded colours as Java signed ints.
 
 ## Workflow routing and image scale (Phase 1)
@@ -302,8 +310,8 @@ categoricals × replicate count, cycling 6 hard-coded colours as Java signed int
 - `plot.plot_shapes(gdf, included=..., calibration_array=...)` returns a matplotlib
   `Figure`. Classes not in `included` are drawn grey, so a user sees what they are leaving
   out. Above `plot.POLYGON_LIMIT` (20 000) shapes it draws one dot per shape instead of an
-  outline. Colours are Okabe-Ito, assigned by sorted class name so a class keeps its colour
-  across redraws. The y axis is inverted so the view matches QuPath's. The legend sits
+  outline. Colours are tab20 without its greys, strong shades first, assigned by sorted class
+  name over the whole experiment (`colors=`) so a class keeps its colour across pictures (080). The y axis is inverted so the view matches QuPath's. The legend sits
   **outside** the axes (`figure.legend(loc="outside right upper")`, which needs the
   constrained layout the figure is built with) — a legend inside covers tissue.
 - Built on `matplotlib.figure.Figure`, **not `pyplot`** — pyplot keeps every figure in a
@@ -570,10 +578,12 @@ RGB separation of every pair of outlines:
 | **tinted 0.55** | **tab10 shaded 0.25** | **1.78** | **0.198** |
 | tinted 0.6 | tab10 shaded 0.4 | 2.83 | 0.159 |
 
-So `CLASS_FILL_TINT = 0.55`, `REPLICATE_SHADE = 0.25`, `REPLICATE_COLORMAP = "tab10"`. tab10
+So `CLASS_FILL_TINT = 0.55`, `REPLICATE_SHADE = 0.25` — **since 080 the class palette is tab20
+(greys left out, strong shades first) and the tint 0.6**: with tab20 fills 0.55 gave a worst
+contrast of 1.66, under the floor, and 0.6 gives 1.81 with the outlines unchanged. Then: `REPLICATE_COLORMAP = "tab10"`. tab10
 rather than tab20 because shading compresses a palette and tab20's twenty entries end up too
 close to tell apart once darkened; ten replicates is already more than a plate makes sense for,
-and it cycles beyond that. `class_colors` (the app-wide Okabe-Ito) stays the single source of
+and it cycles beyond that. `class_colors` (the app-wide class palette) stays the single source of
 truth for a class's hue and `class_fill_colors` tints it, so a class looks like itself in every
 picture. `replicate_colors` keys the palette by replicate *number*, not position, so replicate 2
 keeps its colour when a class with fewer replicates appears.
@@ -1090,7 +1100,7 @@ yields) with these figures and instructions for running locally (`decisions.md` 
 
 ## Test suite
 
-`tests/`, run with `uv run pytest` — 305 tests in about 16 seconds. `tests/test_app.py` drives the whole page headlessly with Streamlit's `AppTest`, replacing the slide uploader with one that hands over demo files. `-m "not slow"` skips the
+`tests/`, run with `uv run pytest` — 313 tests in about 17 seconds. `tests/test_app.py` drives the whole page headlessly with Streamlit's `AppTest`, replacing the slide uploader with one that hands over demo files. `-m "not slow"` skips the
 golden gate for a fast loop. CI runs ruff, the suite and the harness on every push and PR
 (`.github/workflows/ci.yml`).
 

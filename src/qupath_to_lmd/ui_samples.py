@@ -13,7 +13,7 @@ import streamlit as st
 from loguru import logger
 
 from qupath_to_lmd import plot, slides, stats, ui_shared
-from qupath_to_lmd.model import SampleSet
+from qupath_to_lmd.model import CLASS_NAME, SampleSet
 from qupath_to_lmd.ui_slides import SlidesContext, resolve_pixel_size
 
 POOLING_NOTE = (
@@ -28,6 +28,14 @@ def methods() -> dict:
     from qupath_to_lmd import ui_collect_regions, ui_collect_select, ui_collect_whole
 
     return {"legacy": ui_collect_whole, "cells": ui_collect_select, "regions": ui_collect_regions}
+
+
+def class_palette(context: SlidesContext) -> dict[str, str]:
+    """One colour per class for the whole experiment, so every picture agrees (`decisions.md` 080)."""
+    classes = set()
+    for frame in context.frames.values():
+        classes |= set(frame[CLASS_NAME].dropna())
+    return plot.class_colors(sorted(classes))
 
 
 def _suggest(context: SlidesContext) -> str:
@@ -118,16 +126,17 @@ def class_step(context: SlidesContext) -> list[str]:
     if context.several:
         _name_partial_classes(per_slide, selected)
 
+    palette = class_palette(context)
     picture, _margin = st.columns([2, 1])
     with picture:
         if context.several:
             tabs = st.tabs(context.names)
             for tab, slide in zip(tabs, context.slides, strict=True):
                 with tab:
-                    _draw_input(slide, context.calibration[slide.name][1], selected)
+                    _draw_input(slide, context.calibration[slide.name][1], selected, palette)
         else:
             slide = context.slides[0]
-            _draw_input(slide, context.calibration[slide.name][1], selected)
+            _draw_input(slide, context.calibration[slide.name][1], selected, palette)
     return selected
 
 
@@ -189,12 +198,13 @@ def _name_partial_classes(per_slide: dict[str, pandas.DataFrame], selected: list
         )
 
 
-def _draw_input(slide: slides.Slide, calibration_array, selected: list[str]) -> None:
+def _draw_input(slide: slides.Slide, calibration_array, selected: list[str], palette: dict) -> None:
     """Everything on a slide, coloured where kept and grey where left out."""
     gdf = slide.gdf
     with st.spinner("Drawing shapes..."):
         figure = plot.plot_shapes(
-            gdf, included=selected, calibration_array=calibration_array, title=f"{len(gdf):,} shapes on {slide.name}"
+            gdf, included=selected, calibration_array=calibration_array,
+            title=f"{len(gdf):,} shapes on {slide.name}", colors=palette,
         )
     st.pyplot(figure, width="stretch")
     if len(gdf) > plot.SHAPE_LIMIT:

@@ -5,7 +5,7 @@ import uuid
 import streamlit as st
 from loguru import logger
 
-from qupath_to_lmd import ui_cut, ui_plates, ui_samples, ui_shared, ui_slides, ui_summary
+from qupath_to_lmd import ui_cut, ui_plates, ui_samples, ui_slides, ui_summary
 
 ####################
 ## Page settings ###
@@ -77,22 +77,34 @@ st.divider()
 # Each stage hands the next a plain object — slides, a SampleSet, a PlateLayout — so a stage
 # can change without the others knowing (`decisions.md` 078).
 
-summary = ui_summary.Summary.start()
-# Filled before the stages, so a hard stop in a stage never takes the extras away with it.
-with summary.extras:
-    ui_shared.extras_step()
 
-context = ui_slides.render()
-st.divider()
-if context is not None:
+def collect() -> None:
+    """The collection: four stages, with the experiment summarised in the sidebar."""
+    summary = ui_summary.Summary.start()
+    context = ui_slides.render()
+    st.divider()
+    if context is None:
+        return
     summary.slides(context)
     sample_set = ui_samples.render(context)
     st.divider()
-    if sample_set is not None:
-        summary.samples(sample_set, ui_samples.methods()[st.session_state.workflow].LABEL)
-        layout = ui_plates.render(sample_set)
-        st.divider()
-        if layout is not None:
-            summary.plates(layout, len(sample_set.samples))
-            summary.cut(ui_cut.render(context, sample_set, layout))
-            st.divider()
+    if sample_set is None:
+        return
+    summary.samples(sample_set, ui_samples.methods()[st.session_state.workflow].LABEL)
+    layout = ui_plates.render(sample_set)
+    st.divider()
+    if layout is None:
+        return
+    summary.plates(layout, len(sample_set.samples))
+    summary.cut(ui_cut.render(context, sample_set, layout))
+
+
+# Pages at the top, so the sidebar stays the experiment summary. Session state is shared, so moving
+# to Extras and back loses nothing.
+st.navigation(
+    [
+        st.Page(collect, title="Collect", icon="🔬", default=True),
+        st.Page("app_pages/extras.py", title="Extras", icon="🧰", url_path="extras"),
+    ],
+    position="top",
+).run()
