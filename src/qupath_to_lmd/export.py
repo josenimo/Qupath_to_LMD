@@ -13,6 +13,7 @@ from pathlib import Path
 
 import geopandas
 import numpy
+import pandas
 from lmd.lib import Collection, tsp_hilbert_solve
 from loguru import logger
 
@@ -232,4 +233,131 @@ def build_bundle(
             archive.write(log_path, f"log_{plan.session_id}.log")
 
     logger.success("Download bundle assembled")
+    return buffer
+
+
+class CutOrder(str, Enum):
+    """The order an experiment with several slides and plates is cut in on the LMD."""
+
+    # Calibrate a slide once and swap plates under it.
+    BY_SLIDE = "slide"
+    # Mount a plate once and calibrate each slide in turn over it.
+    BY_PLATE = "plate"
+
+
+@dataclass
+class Cut:
+    """One `.xml`: one slide into one plate."""
+
+    slide: str
+    plate: str
+    plan: CollectionPlan
+    result: CollectionResult
+
+    def path(self, order: CutOrder) -> str:
+        """Where the XML sits in the download.
+
+        Its name always carries both slide and plate, so it cannot be loaded against the wrong
+        pair even once it has left its folder.
+        """
+        if order is CutOrder.BY_PLATE:
+            return f"plate_{self.plate}/{self.plate}__{self.slide}.xml"
+        return f"slide_{self.slide}/{self.slide}__{self.plate}.xml"
+
+
+def cutting_instructions(cuts: list[Cut], order: CutOrder) -> str:
+    """Numbered steps for the LMD, in the order the user chose."""
+    slides = list(dict.fromkeys(cut.slide for cut in cuts))
+    plates = list(dict.fromkeys(cut.plate for cut in cuts))
+    lines = [f"{len(slides)} slides, {len(plates)} plates, {len(cuts)} .xml files.", ""]
+
+    def calibrate(cut: Cut) -> str:
+        return ", ".join(cut.plan.calibration_names)
+
+    def detail(cut: Cut) -> str:
+        wells = len(cut.plan.wells_used)
+        return f"{cut.result.n_shapes} shapes into {wells} well{'s' if wells != 1 else ''}"
+
+    outer, inner = (slides, plates) if order is CutOrder.BY_SLIDE else (plates, slides)
+    for number, first in enumerate(outer, start=1):
+        group = [
+            cut for cut in cuts
+            if (cut.slide if order is CutOrder.BY_SLIDE else cut.plate) == first
+        ]
+        group.sort(key=lambda cut: inner.index(cut.plate if order is CutOrder.BY_SLIDE else cut.slide))
+        if order is CutOrder.BY_SLIDE:
+            lines.append(f"{number}. Mount slide {first}.")
+            for letter, cut in zip("abcdefghijklmnopqrstuvwxyz", group, strict=False):
+                lines.append(
+                    f"   {letter}. Put plate {cut.plate} in the collector. Import {cut.path(order)} "
+                    f"and locate {calibrate(cut)}. Cut ({detail(cut)})."
+                )
+        else:
+            lines.append(f"{number}. Put plate {first} in the collector.")
+            for letter, cut in zip("abcdefghijklmnopqrstuvwxyz", group, strict=False):
+                lines.append(
+                    f"   {letter}. Mount slide {cut.slide}. Import {cut.path(order)} "
+                    f"and locate {calibrate(cut)}. Cut ({detail(cut)})."
+                )
+        lines.append("")
+    return "\n".join(lines)
+
+
+def build_experiment_bundle(
+    cuts: list[Cut],
+    samples: pandas.DataFrame,
+    plate_schemes: dict[str, dict[str, str]],
+    plate: str = "384",
+    order: CutOrder = CutOrder.BY_SLIDE,
+    provenance: dict | None = None,
+    log_path: str | None = None,
+    session_id: str | None = None,
+) -> io.BytesIO:
+    """Zip an experiment of several slides or plates.
+
+    One `.xml` per slide and plate, one plate map per plate, the sample sheet, and the steps to
+    cut it in the chosen order.
+
+    A single slide on a single plate goes through `build_bundle` instead, unchanged.
+    """
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "a", zipfile.ZIP_DEFLATED, False) as archive:
+        archive.writestr("samples.csv", samples.to_csv(index=False))
+        for name, scheme in plate_schemes.items():
+            archive.writestr(f"plate_{name}.csv", placement_dataframe(scheme, plate=plate).to_csv(index=True))
+        archive.writestr("samples_and_wells.json", json.dumps(plate_schemes, indent=4))
+        archive.writestr(
+            "provenance.json",
+            json.dumps(
+                {
+                    "experiment": {**(provenance or {}), "cut_order": order.value, "plate": plate},
+                    "cuts": [
+                        {"slide": cut.slide, "plate": cut.plate, "file": cut.path(order), **cut.plan.provenance()}
+                        for cut in cuts
+                    ],
+                },
+                indent=4,
+            ),
+        )
+        archive.writestr("HOW_TO_CUT.txt", cutting_instructions(cuts, order))
+
+        written: set[str] = set()
+        for cut in cuts:
+            archive.writestr(cut.path(order), cut.result.xml)
+            folder = str(Path(cut.path(order)).parent)
+            archive.write(cut.result.image_path, f"{folder}/{cut.slide}__{cut.plate}.png")
+            if cut.slide in written:
+                continue
+            written.add(cut.slide)
+            # One re-importable file per slide: the shapes do not change between plates.
+            with tempfile.NamedTemporaryFile(suffix=".geojson") as temporary:
+                with warnings.catch_warnings():
+                    warnings.filterwarnings("ignore", message=".*'crs' was not provided.*")
+                    sanitize_for_qupath(cut.plan.shapes).to_file(temporary.name, driver="GeoJSON")
+                archive.write(temporary.name, f"qupath/{cut.slide}_processed.geojson")
+
+        if log_path and Path(log_path).exists():
+            archive.write(log_path, f"log_{session_id}.log")
+
+    logger.success(f"Experiment bundle assembled: {len(cuts)} .xml files")
     return buffer
