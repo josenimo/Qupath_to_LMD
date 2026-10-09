@@ -4,6 +4,9 @@ These use a stubbed Streamlit rather than a browser. They cover the decisions th
 collection — the hard stops, and the difference between a warning and a note.
 """
 
+import json
+import pathlib
+
 import pytest
 import streamlit
 from shapely.geometry import box as shapely_box
@@ -23,6 +26,7 @@ from qupath_to_lmd import (
     ui_slides,
 )
 from qupath_to_lmd.model import CLASS_NAME
+from tests.conftest import MULTICLASS_FILE
 
 
 class Stopped(Exception):
@@ -287,6 +291,29 @@ def test_the_shape_fingerprint_changes_when_classes_are_exploded(fake_streamlit,
         "before the explode would be reused."
     )
     assert fingerprint(cells_gdf, "b.geojson") != before, "A different file gave the same fingerprint."
+
+
+def test_the_shape_fingerprint_changes_when_a_re_export_reclassifies_cells(fake_streamlit, tmp_path):
+    """A classifier run again in QuPath: same file name, same cell count, same class names, but
+    cells in different classes. Only the file's content tells the two exports apart."""
+    swap = {"Tumor": "Immune cells", "Immune cells": "Tumor"}
+    data = json.loads(pathlib.Path(MULTICLASS_FILE).read_text())
+    for feature in data["features"]:
+        classification = feature["properties"].get("classification") or {}
+        if classification.get("name") in swap:
+            classification["name"] = swap[classification["name"]]
+    re_export = tmp_path / pathlib.Path(MULTICLASS_FILE).name
+    re_export.write_text(json.dumps(data))
+
+    before, = slides.read_slides([MULTICLASS_FILE])
+    after, = slides.read_slides([str(re_export)])
+    assert before.source_file == after.source_file and len(before.gdf) == len(after.gdf)
+    fingerprints = [ui_slides.SlidesContext([slide], {}).fingerprint() for slide in (before, after)]
+    assert fingerprints[0] != fingerprints[1], (
+        "A re-export with cells in different classes got the same cache fingerprint, so the "
+        "selection and regions cached from the old classes would be reused — cells now in one "
+        "class could be cut into another class's well."
+    )
 
 
 def test_the_scale_is_estimated_when_the_file_allows_it(fake_streamlit):

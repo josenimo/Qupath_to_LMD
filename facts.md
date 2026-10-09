@@ -1094,9 +1094,11 @@ yields) with these figures and instructions for running locally (`decisions.md` 
 - `plot_shapes` scales fine — 0.11 s at 150 000 — because it switches to centroids above
   `POLYGON_LIMIT`. That earlier decision paid off.
 - Cache keys are explicit tuples, never the frame: hashing 150 000 rows would cost what the cache
-  saves. `_shape_fingerprint` is `(file name, row count, sorted class names)` — the class names
-  matter because exploding a class rewrites them in place, so a filename alone would serve a
-  stale selection.
+  saves. `SlidesContext.fingerprint` is `(slide name, file name, content digest, row count,
+  sorted class names)`. The content digest is a hash of the file's bytes, taken once at read
+  (`slides.Slide.content_digest`): a classifier run again in QuPath keeps the name, the count and
+  the class names, and only the bytes differ (`decisions.md` 084). The class names stay because
+  exploding a class rewrites them after the read.
 - **Columns nothing reads are dropped at load** (`geojson.UNUSED_COLUMNS`): `measurements`,
   `name`, `isLocked`. `measurements` is consumed once during the read to derive the implied pixel
   size, which then lives in the report — so `qc.compare_pixel_size` is pure arithmetic and costs

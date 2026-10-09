@@ -58,7 +58,10 @@ class SlidesContext:
         """A cheap identity for cache keys: never the frames themselves (`decisions.md` 051)."""
         chosen = [self.slide(name)] if name else self.slides
         return tuple(
-            (slide.name, slide.source_file, len(slide.gdf), tuple(sorted(slide.gdf[CLASS_NAME].dropna().unique())))
+            (
+                slide.name, slide.source_file, slide.content_digest, len(slide.gdf),
+                tuple(sorted(slide.gdf[CLASS_NAME].dropna().unique())),
+            )
             for slide in chosen
         )
 

@@ -1959,3 +1959,18 @@ Jose's notes after clicking through 078.
   "Put plate P1 in the collector."), and `provenance.json` (`plate: Plate1` per cut, plus
   `experiment.collector`). A script that matched `P1` in `samples.csv` needs updating. The single
   slide, single plate download is unchanged.
+
+## 084 — cache keys include a hash of each file's content
+**Date:** 2026-10-09 · **Status:** active · **refines 050**
+- **What was wrong:** the selection, projection, spacing and class-statistics caches keyed on
+  `(slide name, file name, row count, class names)` (050). A QuPath export reclassified and
+  exported again keeps all four, so a re-upload in the same session — or another user's upload of
+  a same-named file, since `st.cache_data` is shared across sessions — got results computed from
+  the old classes. The selection is by row, so a cell now in another class could have been cut
+  into the old class's well. Found while profiling; on demo1's `P1_S1` with 877 of 1 658 cells
+  reclassified, the fingerprint was identical.
+- **Decision:** `slides.read_slides` hashes each file's bytes (blake2b, 128 bits) into
+  `Slide.content_digest`, and the fingerprint includes it. Taken once at read, so a rerun pays
+  nothing: 0.06 s measured on the 84 MB real export, against the seconds the read itself takes.
+- **Rejected:** hashing the frame on every rerun — the cost 050 avoided; and keying on the upload's
+  name and size, which a re-export with the same digit counts in its coordinates also keeps.

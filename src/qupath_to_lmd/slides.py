@@ -11,6 +11,7 @@ bookkeeping — how much each slide is asked for and what it delivered — spans
 """
 
 import dataclasses
+import hashlib
 import io
 import zipfile
 from collections.abc import Mapping
@@ -65,6 +66,7 @@ class Slide:
     calibration_points: dict[str, list[float]]
     report: geojson.GeojsonReport
     source_file: str | None = None
+    content_digest: str | None = None
 
 
 def _unique(name: str, taken: set[str]) -> str:
@@ -101,6 +103,16 @@ def _geojson_sources(source) -> list[tuple[str, Any]]:
     return found
 
 
+def _content_digest(readable) -> str:
+    """A hash of the file's bytes, which is what tells a cache two exports of one image apart.
+
+    They share a name, a cell count and the class names: a classifier run again changes only
+    which cell is in which class.
+    """
+    data = readable.getvalue() if hasattr(readable, "getvalue") else Path(readable).read_bytes()
+    return hashlib.blake2b(data, digest_size=16).hexdigest()
+
+
 def read_slides(sources) -> list[Slide]:
     """Read every upload into a slide, expanding zips. Names come from file names, made unique.
 
@@ -118,7 +130,12 @@ def read_slides(sources) -> list[Slide]:
                 raise geojson.GeojsonError(f"{file_name}: {error}") from error
             name = _unique(Path(file_name).stem, taken)
             taken.add(name)
-            slides.append(Slide(name, gdf, calibration_points, report, source_file=file_name))
+            slides.append(
+                Slide(
+                    name, gdf, calibration_points, report,
+                    source_file=file_name, content_digest=_content_digest(readable),
+                )
+            )
     logger.info(f"Read {len(slides)} slides: {[slide.name for slide in slides]}")
     return slides
 
