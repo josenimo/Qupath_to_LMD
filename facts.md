@@ -322,6 +322,12 @@ categoricals × replicate count, cycling 6 hard-coded colours as Java signed int
   constrained layout the figure is built with) — a legend inside covers tissue.
 - Built on `matplotlib.figure.Figure`, **not `pyplot`** — pyplot keeps every figure in a
   global registry and Streamlit reruns would leak them.
+- **Shown through `ui_shared.show_picture`, never `st.pyplot`** (`decisions.md` 085). Each picture
+  is drawn once per `ui_shared.picture_key` — a hash of what it shows: the slide's fingerprint,
+  the labels, the calibration, the palette, and for regions their geometry — and kept as a PNG in
+  `st.cache_data` (64 entries, about 0.5 MB each). It is rendered at the dpi that fits Streamlit's
+  1460 px display limit (`PICTURE_MAX_WIDTH_PX`), 200 at most: anything wider Streamlit decodes,
+  shrinks and re-encodes on every rerun, cached or not.
 - Timings on the 14145-shape export: statistics 0.038 s, full polygon render 0.16 s.
 
 ## Budgets and feasibility (Phase 3)
@@ -523,7 +529,8 @@ is arranged to avoid. Every figure it carried is in the per-replicate table belo
 below it re-executes — which would leave the plate and the export showing a stale collection,
 the exact trap `decisions.md` 051 describes. With the collection step above the plate the
 fragment has to go, and the caches on the projection and the packing are what keep a full rerun
-affordable instead.
+affordable instead. The one fragment in the app wraps stages 3 and 4 together
+(`streamlit_app.collector_and_cut`, 085), which has nothing below it.
 
 Defaults: **3 replicates** of **25 000 µm²** per class — or **150 cells** where a budget counts
 cells. Defined once, in `budget.py` (`DEFAULT_REPLICATES`, `DEFAULT_AREA_PER_REPLICATE_UM2`,
@@ -1108,6 +1115,12 @@ yields) with these figures and instructions for running locally (`decisions.md` 
   whole frame. A full copy cost 99 MB at a million shapes.
 - ~~Step 8 is an `st.fragment`~~ — **removed in 078.** Selection now runs above the plate, and a
   fragment would leave the Plates and Cut stages stale; the selection cache carries the cost.
+- **Stages 3 and 4 are one `st.fragment`** (`decisions.md` 085): a collector or cut setting reruns
+  only them. Stages 1 and 2 never read what 3 and 4 write, so nothing above can go stale; the
+  sidebar is the one thing outside, and `Summary.forget` withdraws the Collector and Cut lines
+  before each run so a stage that now stops leaves no old line. With demo1's six slides, in
+  Chrome: a margin change **2.8 s → 0.2 s**, a seed change in stage 2 **2.85 s → 0.1–0.4 s** (the
+  picture cache). `AppTest.run()` always runs the whole script, so it cannot measure a fragment.
 - Together these took the million-shape peak from 2 689 MB to **2 207 MB**, and
   `build_collection` from 7.6 s to 1.1 s (the latter mostly by defaulting to hilbert).
 

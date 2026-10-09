@@ -1974,3 +1974,36 @@ Jose's notes after clicking through 078.
   nothing: 0.06 s measured on the 84 MB real export, against the seconds the read itself takes.
 - **Rejected:** hashing the frame on every rerun — the cost 050 avoided; and keying on the upload's
   name and size, which a re-export with the same digit counts in its coordinates also keeps.
+
+## 085 — stages 3 and 4 as one fragment, and pictures drawn once
+**Date:** 2026-10-09 · **Status:** active · **refines 050, 078**
+- **The problem:** Jose — changing the margin with demo1's six slides takes about 5 s. Measured in
+  Chrome, 2.8 s for any widget change, of which the plate code was 50 ms. The rest was drawing:
+  every rerun redrew 12 pictures (six class pictures, six selection previews), and `st.pyplot`
+  saved each at 200 dpi, 2 020 px wide, which Streamlit then decoded, shrank to its 1 460 px
+  display limit and encoded again.
+- **Decision 1, a fragment around stages 3 and 4** (`streamlit_app.collector_and_cut`). A
+  collector or cut setting reruns only those two stages: margin change 2.8 s → 0.2 s. 051's
+  fragment went in 078 because it sat *above* the plate and the export, which a fragment rerun
+  leaves stale. This one has nothing below it, and stages 1 and 2 only ever clear what 3 and 4
+  write, on a new upload, which is a full rerun anyway. The sidebar summary is outside it, so
+  `Summary.forget` withdraws the Collector and Cut lines first: without it, hitting the
+  no-usable-wells stop left the sidebar saying the plate was set.
+- **Decision 2, each picture drawn once per thing it shows** (`ui_shared.show_picture`), kept as
+  a PNG under a hash of the slide's fingerprint (084), the labels, the calibration, the palette
+  and, for regions, their geometry. That covers the full reruns a fragment cannot avoid: a seed
+  change in stage 2, 2.85 s → 0.1–0.4 s, since the six class pictures stay and only the six
+  previews redraw.
+- **Decision 3, rendered to fit 1 460 px.** Caching alone gave 1.07 s, not 0.1 s: Streamlit
+  re-encodes a too-wide image on every rerun even from cached bytes. The dpi is set from the
+  figure's width (143 for the 10-inch shapes pictures, 130 for the 11-inch regions), capped at
+  200. What the browser receives went from a 2 020 px render shrunk to 1 460 to a 1 444 px render
+  drawn directly; side by side the two look the same.
+- **Rejected:** `st.form` for the collector settings — an Apply button, and a plate that no longer
+  follows the controls, for the speed the fragment gives without either. Upgrading Streamlit for
+  per-session caches or fragment keys — nothing here needs them. A one-slide-at-a-time picker
+  instead of tabs would make the first draw after confirming calibration (1.4 s, twelve pictures)
+  about six times cheaper; left for Jose, since it changes the layout.
+- **Costs accepted:** up to 64 pictures of about 0.5 MB in memory, shared by every session, which
+  is safe because the key is the content. A change to `plot.py` reaches the app only after a
+  server restart, since the cache key is what a picture shows, not how it is drawn.

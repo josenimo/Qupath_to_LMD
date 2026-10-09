@@ -66,6 +66,18 @@ class Summary:
             self.lines.pop("Cut")
         self._render()
 
+    def forget(self, *stages: str) -> None:
+        """Withdraw stages about to report again.
+
+        A fragment rerun reuses this summary, so a stage that now stops early would otherwise
+        leave its last line showing.
+        """
+        for stage in stages:
+            self.lines.pop(stage, None)
+        if "Collector" in stages:
+            self.figures.pop("plates", None)
+        self._render()
+
     def _render(self) -> None:
         if self.placeholder is None:
             return

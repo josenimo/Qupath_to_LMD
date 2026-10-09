@@ -5,9 +5,14 @@ The stages themselves are `ui_slides`, `ui_samples` (with one `ui_collect_*` mod
 `st.session_state`; the library modules stay pure and take explicit arguments.
 """
 
+import hashlib
+import io
 import json
 
+import geopandas
+import numpy
 import pandas
+import shapely
 import streamlit as st
 
 from qupath_to_lmd import export, extras, plate, qc, stats
@@ -125,6 +130,57 @@ def report_pixel_size(value, source, estimate, report) -> None:
             "shapes. That usually means the export mixes images, or was rescaled — worth "
             "checking before relying on any area."
         )
+
+
+# Every widget change reruns the whole script, and redrawing each slide's pictures was nearly all
+# of a rerun's cost: 2.4 s of 2.5 s with demo1's six slides. A picture is drawn once per thing it
+# shows and kept as a PNG (`decisions.md` 085).
+#
+# Streamlit shows a picture at most 1460 px wide, and decodes, shrinks and re-encodes anything wider
+# on every rerun, cached or not. So pictures are rendered to fit, at up to the 200 dpi `st.pyplot`
+# used; the PNG then reaches the browser untouched.
+PICTURE_MAX_WIDTH_PX = 1460
+PICTURE_MAX_DPI = 200
+PICTURE_PAD_INCHES = 0.1
+
+
+def picture_key(*parts) -> str:
+    """A hash of everything a picture shows, so it is redrawn exactly when one of them changes.
+
+    Tables and geometries are hashed by value. Pass a slide by its fingerprint, never its frame:
+    hashing every shape on every rerun costs what the cache saves (`decisions.md` 050).
+    """
+    digest = hashlib.blake2b(digest_size=16)
+    for part in parts:
+        if isinstance(part, geopandas.GeoSeries):
+            digest.update(b"\0".join(wkb or b"" for wkb in shapely.to_wkb(numpy.asarray(part.values))))
+        elif isinstance(part, pandas.Series):
+            digest.update(pandas.util.hash_pandas_object(part, index=True).values.tobytes())
+        elif isinstance(part, numpy.ndarray):
+            digest.update(repr((part.dtype.str, part.shape)).encode() + part.tobytes())
+        else:
+            digest.update(repr(part).encode())
+        digest.update(b"|")
+    return digest.hexdigest()
+
+
+def picture_png(figure) -> bytes:
+    """A figure as PNG, no wider than Streamlit shows it."""
+    width_inches = figure.get_figwidth() + 2 * PICTURE_PAD_INCHES
+    dpi = min(PICTURE_MAX_DPI, int(PICTURE_MAX_WIDTH_PX / width_inches))
+    buffer = io.BytesIO()
+    figure.savefig(buffer, format="png", dpi=dpi, bbox_inches="tight", pad_inches=PICTURE_PAD_INCHES)
+    return buffer.getvalue()
+
+
+@st.cache_data(show_spinner=False, max_entries=64)
+def _cached_picture(_draw, key: str) -> bytes:
+    return picture_png(_draw())
+
+
+def show_picture(draw, key: str, width="stretch") -> None:
+    """Show the figure `draw` makes, drawing it only when `key` (from `picture_key`) is new."""
+    st.image(_cached_picture(draw, key), width=width)
 
 
 # Amounts in this app run from tens to millions of µm², and no decimal in them is meaningful:

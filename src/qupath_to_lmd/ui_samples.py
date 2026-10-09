@@ -133,10 +133,10 @@ def class_step(context: SlidesContext) -> list[str]:
             tabs = st.tabs(context.names)
             for tab, slide in zip(tabs, context.slides, strict=True):
                 with tab:
-                    _draw_input(slide, context.calibration[slide.name][1], selected, palette)
+                    _draw_input(slide, context.calibration[slide.name][1], selected, palette, context.fingerprint(slide.name))
         else:
             slide = context.slides[0]
-            _draw_input(slide, context.calibration[slide.name][1], selected, palette)
+            _draw_input(slide, context.calibration[slide.name][1], selected, palette, context.fingerprint(slide.name))
     return selected
 
 
@@ -198,15 +198,17 @@ def _name_partial_classes(per_slide: dict[str, pandas.DataFrame], selected: list
         )
 
 
-def _draw_input(slide: slides.Slide, calibration_array, selected: list[str], palette: dict) -> None:
+def _draw_input(slide: slides.Slide, calibration_array, selected: list[str], palette: dict, fingerprint: tuple) -> None:
     """Everything on a slide, coloured where kept and grey where left out."""
     gdf = slide.gdf
     with st.spinner("Drawing shapes..."):
-        figure = plot.plot_shapes(
-            gdf, included=selected, calibration_array=calibration_array,
-            title=f"{len(gdf):,} shapes on {slide.name}", colors=palette,
+        ui_shared.show_picture(
+            lambda: plot.plot_shapes(
+                gdf, included=selected, calibration_array=calibration_array,
+                title=f"{len(gdf):,} shapes on {slide.name}", colors=palette,
+            ),
+            ui_shared.picture_key("classes", fingerprint, selected, calibration_array, palette),
         )
-    st.pyplot(figure, width="stretch")
     if len(gdf) > plot.SHAPE_LIMIT:
         st.caption(
             f"Over {plot.SHAPE_LIMIT:,} shapes, so each one is drawn as a dot rather than its "

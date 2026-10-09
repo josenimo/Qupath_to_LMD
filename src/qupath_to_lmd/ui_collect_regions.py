@@ -134,9 +134,12 @@ def regions_step(context: SlidesContext, selected: list[str], scales: dict):
                     "others are left out. This usually means the same cells were exported twice."
                 )
         with picture:
+            shown, palette = patches[slide.name], ui_samples.class_palette(context)
             with st.spinner("Drawing regions..."):
-                figure = plot.plot_regions_and_circles(patches[slide.name], colors=ui_samples.class_palette(context))
-            st.pyplot(figure, width="stretch")
+                ui_shared.show_picture(
+                    lambda: plot.plot_regions_and_circles(shown, colors=palette),
+                    ui_shared.picture_key("regions", shown[CLASS_NAME], shown.geometry, palette),
+                )
             st.caption("Fill colour is the class.")
 
     if context.several:
@@ -248,9 +251,15 @@ def _draw(context: SlidesContext, patches: dict, circles: dict | None) -> None:
     def draw(name: str) -> None:
         shown = circles.get(name) if circles else None
         replicate_of = shown[REPLICATE] if shown is not None and len(shown) else None
+        tissue = patches[name]
+        key = [tissue[CLASS_NAME], tissue.geometry, palette]
+        if shown is not None:
+            key += [shown[CLASS_NAME], shown.geometry, replicate_of]
         with st.spinner("Drawing..."):
-            figure = plot.plot_regions_and_circles(patches[name], shown, replicate_of=replicate_of, colors=palette)
-        st.pyplot(figure, width="stretch")
+            ui_shared.show_picture(
+                lambda: plot.plot_regions_and_circles(tissue, shown, replicate_of=replicate_of, colors=palette),
+                ui_shared.picture_key("regions and circles", *key),
+            )
 
     if context.several:
         for tab, name in zip(st.tabs(context.names), context.names, strict=True):
