@@ -327,12 +327,18 @@ def _preview(context: SlidesContext, pooled: slides.PooledSelection) -> None:
     def draw(slide) -> None:
         replicate_of = pooled.per_slide[slide.name].replicate_of.reindex(slide.gdf.index)
         labels = slide.gdf[CLASS_NAME].where(replicate_of.notna())
+        calibration_array = context.calibration[slide.name][1]
         with st.spinner("Drawing the selection..."):
-            figure = plot.plot_shapes(
-                slide.gdf, labels=labels, calibration_array=context.calibration[slide.name][1],
-                title=f"What will be cut on {slide.name}", colors=palette,
+            ui_shared.show_picture(
+                lambda: plot.plot_shapes(
+                    slide.gdf, labels=labels, calibration_array=calibration_array,
+                    title=f"What will be cut on {slide.name}", colors=palette,
+                ),
+                ui_shared.picture_key(
+                    "selection", context.fingerprint(slide.name), labels, calibration_array, palette
+                ),
+                width="content",
             )
-        st.pyplot(figure, width="content")
 
     if context.several:
         for tab, slide in zip(st.tabs(context.names), context.slides, strict=True):

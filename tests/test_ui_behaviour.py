@@ -4,14 +4,21 @@ These use a stubbed Streamlit rather than a browser. They cover the decisions th
 collection — the hard stops, and the difference between a warning and a note.
 """
 
+import io
+import json
+import pathlib
+
+import numpy
 import pytest
 import streamlit
+from PIL import Image
 from shapely.geometry import box as shapely_box
 
 from qupath_to_lmd import (
     budget,
     geojson,
     plate,
+    plot,
     regions,
     selection,
     slides,
@@ -21,8 +28,10 @@ from qupath_to_lmd import (
     ui_samples,
     ui_shared,
     ui_slides,
+    ui_summary,
 )
 from qupath_to_lmd.model import CLASS_NAME
+from tests.conftest import MULTICLASS_FILE
 
 
 class Stopped(Exception):
@@ -287,6 +296,29 @@ def test_the_shape_fingerprint_changes_when_classes_are_exploded(fake_streamlit,
         "before the explode would be reused."
     )
     assert fingerprint(cells_gdf, "b.geojson") != before, "A different file gave the same fingerprint."
+
+
+def test_the_shape_fingerprint_changes_when_a_re_export_reclassifies_cells(fake_streamlit, tmp_path):
+    """A classifier run again in QuPath: same file name, same cell count, same class names, but
+    cells in different classes. Only the file's content tells the two exports apart."""
+    swap = {"Tumor": "Immune cells", "Immune cells": "Tumor"}
+    data = json.loads(pathlib.Path(MULTICLASS_FILE).read_text())
+    for feature in data["features"]:
+        classification = feature["properties"].get("classification") or {}
+        if classification.get("name") in swap:
+            classification["name"] = swap[classification["name"]]
+    re_export = tmp_path / pathlib.Path(MULTICLASS_FILE).name
+    re_export.write_text(json.dumps(data))
+
+    before, = slides.read_slides([MULTICLASS_FILE])
+    after, = slides.read_slides([str(re_export)])
+    assert before.source_file == after.source_file and len(before.gdf) == len(after.gdf)
+    fingerprints = [ui_slides.SlidesContext([slide], {}).fingerprint() for slide in (before, after)]
+    assert fingerprints[0] != fingerprints[1], (
+        "A re-export with cells in different classes got the same cache fingerprint, so the "
+        "selection and regions cached from the old classes would be reused — cells now in one "
+        "class could be cut into another class's well."
+    )
 
 
 def test_the_scale_is_estimated_when_the_file_allows_it(fake_streamlit):
@@ -677,3 +709,82 @@ def test_a_custom_file_on_one_holder_does_not_warn_about_several_runs(fake_strea
     assert "separate cutting runs" not in fake_streamlit.shown("warnings"), (
         "An uploaded file puts everything on one tube holder, yet the warning speaks of several runs."
     )
+
+
+def test_pictures_fit_the_width_streamlit_shows(cells_gdf, calibration, touching_chain):
+    """Streamlit decodes, shrinks and re-encodes any picture wider than it shows, on every rerun,
+    cached or not — the cost that made a margin change take seconds (`decisions.md` 085)."""
+    from streamlit.elements.lib.image_utils import MAXIMUM_CONTENT_WIDTH
+
+    assert ui_shared.PICTURE_MAX_WIDTH_PX == MAXIMUM_CONTENT_WIDTH, (
+        "Streamlit changed the widest picture it shows; pictures are now either re-encoded on every "
+        "rerun or blurrier than they could be. Set PICTURE_MAX_WIDTH_PX to the new value."
+    )
+    figures = {
+        "classes and selection": plot.plot_shapes(cells_gdf, calibration_array=calibration, title="t"),
+        "regions": plot.plot_regions_and_circles(touching_chain, title="t"),
+    }
+    for name, figure in figures.items():
+        width, _height = Image.open(io.BytesIO(ui_shared.picture_png(figure))).size
+        assert ui_shared.PICTURE_MAX_WIDTH_PX - 100 < width <= ui_shared.PICTURE_MAX_WIDTH_PX, (
+            f"The {name} picture is {width} px wide: wider and Streamlit re-encodes it on every "
+            "rerun, much narrower and it is blurrier than the page could show."
+        )
+
+
+def test_a_picture_is_drawn_once_and_again_only_when_what_it_shows_changes(monkeypatch, cells_gdf):
+    """Redrawing every slide's pictures was nearly all of a rerun's cost; a stale picture would
+    show a selection or classes the collection no longer has."""
+    monkeypatch.setattr(streamlit, "image", lambda *a, **k: None)
+    ui_shared._cached_picture.clear()
+    drawn = []
+
+    def show(labels, calibration, palette):
+        def draw():
+            drawn.append(1)
+            return plot.plot_shapes(cells_gdf.head(5), labels=labels.head(5))
+
+        ui_shared.show_picture(draw, ui_shared.picture_key("selection", ("A",), labels, calibration, palette))
+
+    labels = cells_gdf[CLASS_NAME].copy()
+    calibration = numpy.array([[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]])
+    show(labels, calibration, {"x": "#000000"})
+    show(labels.copy(), calibration.copy(), {"x": "#000000"})
+    assert len(drawn) == 1, "An unchanged picture was drawn again: every rerun pays for it."
+
+    reselected = labels.copy()
+    reselected.iloc[0] = None
+    for changed in [
+        (reselected, calibration, {"x": "#000000"}),
+        (labels, calibration + 1, {"x": "#000000"}),
+        (labels, calibration, {"x": "#ffffff"}),
+    ]:
+        before = len(drawn)
+        show(*changed)
+        assert len(drawn) == before + 1, (
+            "A picture whose selection, calibration or colours changed was not redrawn, so it "
+            "shows something other than what will be cut."
+        )
+
+
+def test_a_picture_key_sees_moved_geometry(touching_chain):
+    """The regions pictures key on their geometry: a region that moved must be drawn where it is."""
+    moved = touching_chain.copy()
+    moved.geometry = moved.geometry.translate(5, 0)
+    assert ui_shared.picture_key(touching_chain.geometry) != ui_shared.picture_key(moved.geometry), (
+        "Moved regions gave the same picture key, so the old map would be shown."
+    )
+
+
+def test_the_summary_forgets_a_stage_that_will_report_again():
+    """Stages 3 and 4 rerun on their own and reuse the summary; one that now stops early (no
+    usable wells) must not leave its last line claiming a collector is set."""
+    summary = ui_summary.Summary()
+    summary.lines.update({"Collector": "18 of 18 samples placed", "Cut": "ready to download"})
+    summary.figures["plates"] = "**1 plate**"
+    summary.forget("Collector", "Cut")
+    assert "Collector" not in summary.lines and "Cut" not in summary.lines, (
+        "The sidebar would still say the collector is set and the download ready after stage 3 stopped."
+    )
+    assert "plates" not in summary.figures, "The sidebar headline would still count plates."
+

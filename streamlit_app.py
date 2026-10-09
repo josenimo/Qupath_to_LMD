@@ -91,6 +91,16 @@ def collect() -> None:
     if sample_set is None:
         return
     summary.samples(sample_set, ui_samples.methods()[st.session_state.workflow].LABEL)
+    collector_and_cut(context, sample_set, summary)
+
+
+# A fragment: a collector or cut setting reruns only these two stages, not the slides and samples
+# above them, which nothing here can change. Safe where the fragment of 051 was not, because
+# nothing on the page sits below it to go stale (`decisions.md` 085).
+@st.fragment
+def collector_and_cut(context, sample_set, summary) -> None:
+    """Stages 3 and 4."""
+    summary.forget("Collector", "Cut")
     layout = ui_plates.render(sample_set)
     st.divider()
     if layout is None:
